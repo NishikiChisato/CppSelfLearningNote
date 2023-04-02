@@ -7,5 +7,8 @@
 目前所含书籍：
 
 * `C++ Primer`
+  * 拷贝控制
+
 * `Computer System A Programer's Perspective`
-* 
+  * 信息的处理和表示
+
