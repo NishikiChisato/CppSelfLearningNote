@@ -10,5 +10,6 @@
   * 拷贝控制
 
 * `Computer System A Programer's Perspective`
-  * 信息的处理和表示
+  * 信息的表示和处理
+  * 程序的机器级表示
 
