@@ -1,9 +1,3 @@
----
-title: CPU 虚拟化
-tags: 操作系统导论
-categories: 操作系统导论
----
-
 # CPU 虚拟化
 
 - [CPU 虚拟化](#cpu-虚拟化)
