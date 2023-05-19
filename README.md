@@ -1,6 +1,6 @@
 # CppSelfLearningNote
 
-## 本仓库用于保存C++相关学习笔记
+本仓库用于保存C++相关学习笔记
 
 注：由于 `github` 本身的 `md` 显示有问题，因此建议将其 `clone` 到本地后用 `vscode` 打开
 
@@ -17,3 +17,20 @@
   * [概述](./操作系统导论/src/概述.md)
   * [CPU 虚拟化](./操作系统导论/src/CPU%20虚拟化.md)
 
+## 文件结构
+
+```
+├─C++Primer
+│  └─src
+├─CSAPP
+│  ├─img
+│  └─src
+├─Effective C++
+├─操作系统导论
+│  ├─img
+│  └─src
+└─计算机网络：自顶向下方法
+    ├─img
+    ├─src
+    └─Wireshark_lab
+```
