@@ -334,6 +334,8 @@ else//TLB miss
 * 如果 `TLB` 中存在地址映射 `TLB hit`，那么直接从 `TLB` 表项中取出，对保护位进行检查后取出偏移量 `offset`，进而直接访问物理内存。整个访问虚拟地址的过程**没有额外的内存访问**，一次虚拟地址访问对应一次物理地址访问
 * 如果 `TLB` 中不存在地址映射 `TLB miss`，硬件会访问页表，找出该转换映射，这里与上面没有引入 `TLB` 的逻辑一样。不同的是我们将 `TLB` 更新完成后，会**重新尝试执行该指令**，而不是在此直接进行内存访问
 
+> 处理 `TLB miss` 的可以是硬件也可以是软件，前者称为硬件管理的 `TLB`，后者称为软件管理的 `TLB`。对于硬件处理的情况，硬件将会在页表中找到需要的地址映射；而对于软件处理的情况，则是操作系统执行查找过程 
+
 我们来看一个 `TLB` 实际处理的例子，这可以很好的展示 `TLB` 对分页速度的优化
 
 我们假设有一个 `8` 位的虚拟地址空间，一个页 `page` 的大小为 `16` 字节。因此 `8` 位的虚拟地址的前四位用于表示 `VPN`，后四位用于表示 `offset`。有一个 `10` 个元素的 `int` 数组，起始虚拟地址为 `100`，具体如下图所示：
@@ -520,9 +522,97 @@ else//TLB miss
 }
 ```
 
-到此我们解决了分页的两个问题：分页速度过慢和页表占用过多内存，它们分别对应 `TLB` 和 `Multi-level Page Table`。我们到目前为止一直假设页表可以被**全部**放入到物理内存当中，我们再次基础上对页表的大小进行优化。但问题是页表仍有可能因为太大而无法全部放入到物理内存中，这个时候操作系统需要将部分页表交换 `swap` 到磁盘中，下面我们将讨论将分页移入和移出内存
+到此我们解决了分页的两个问题：分页速度过慢和页表占用过多内存，它们分别对应 `TLB` 和 `Multi-level Page Table`。我们到目前为止一直假设页表可以被**全部**放入到物理内存当中，我们再次基础上对页表的大小进行优化。如果页表仍有因为太大而无法全部放入到物理内存中的可能，这个时候操作系统需要将部分页表交换 `swap` 到磁盘中
 
 ---
 
 ## Beyond Physical Memory
 
+到目前为止，我们的总是假设进程的地址空间不是很大，可以全部放入到内存当中。实际上，由于系统可以同时运行上百个进程，因此我们比如不可能将所有进程的虚拟页全部放入到物理内存中，我们比如需要将一部分页交换 `swap` 到硬盘 `hard disk drive` 中。因此，我们目前在内存层级 `memory hierarchy` 的基础上再加一层，也就是将硬盘也纳入到内存的范围当中
+
+> 由于进程的虚拟页指的是地址空间中的虚拟页，物理页指的是该虚拟页实际存储在物理空间中的页，在后面的讨论中我们统一用物理页进行叙述
+
+为了解决需要将进程物理页放到硬盘上这个问题，我们需要在硬盘上开辟出一块空间，用于物理页的换入与换出，这样的空间被称为交换空间 `swap space`。我们假设操作系统会以页大小位单位将物理页读取或写入到交换空间中，也就是我们可以在需要的时候将物理页交换到内存中
+
+在运行过程中，可能发生如下情形：
+
+![SwapSample](../img/SwapSample.png)
+
+在图中我们看到，进程 `0` 的虚拟页 `0` 处于物理内存当中，另外的两个虚拟页则处于交换空间当中。在内存当中，进程 `0, 1, 2` 共享物理内存，而进程 `3` 则没有被加载到内存当中
+
+这种换入换出的机制能够帮助操作系统能够获得超越物理内存的空间，为了支持换入换，我们需要增加一些机制以满足我们的需求
+
+我们回顾内存引用时发生的事情，当正在运行的进程生成了一个虚拟地址引用，硬件会做如下事情：
+
+* 首先检查 `TLB`，如果该地址存在则直接返回实际的物理地址（最快）
+* 如果在 `TLB` 中找不到，那么硬件需要查找页表，得到页表项 `PTE` 后将其插入 `TLB`，随后再重试这条指令
+
+我们通过在页表项中添加一位存在位 `present bit` 表示该页是否存在物理内存中。如果该位设置为 `1`，则表明该页存在物理内存当中，那么所有的过程就按上面所描述的那样；如果设置为 `0`，则表明该页不在内存而是在硬盘中。由于我们访问了一个不存在的页，因此这会导致引发页错误 `page fault`。这个时候，操作系统会进入内核态，运行页错误处理程序 `page-fault handler`
+
+需要说明的是，只有进程访问内存中不存在的页就会导致页错误，这分两种情况：该页本身就不存在，即非法的地址访问；该页本身存在，只不过在内存当中。我们将这两种情况统一称为页错误，因此都用 `page-fault handler` 来进行处理
+
+对于常规的地址非法访问导致的页错误，操作系统可以直接终止掉该进程的运行，我们重点关注这样页被交换到硬盘的情况
+
+由于该页被交换到硬盘，因此操作系统需要将该页找到并重新写入到内存中。具体地，**操作系统会用页表项 `PTE` 中的某些位来存储硬盘地址**（可以用 `PFN`，毕竟这个时候页不在内存中，`PFN` 项无效）。因此在发生页错误时，操作系统可以直接在 `PTE` 中找到该页的地址，讲请求发送到硬盘并将页读取到内存中
+
+当硬盘 `I/O` 完成时，操作系统会更新页表，将对应的 `PFN` 设置为实际的物理页帧的位置，并更新存在位，之后会**重试该指令**。第二次运行会导致 `TLB miss`，由于这次页处于内存中，因此会用地址映射来更新 `TLB`，更新完毕后会**再次重试该指令**。第三次执行则是 `TLB hit`
+
+下面的代码将展示整个的逻辑情况：
+
+```c
+VPN = (VirtualAddress & VPN_MASK) >> SHIFT
+(Success, TLBEntry) = TLB_Lookup(VPN)
+if(Success == true)//TLB hit
+{
+    if(CanAccess(TLBEntry.ProtectionBits) == true)
+    {
+        offset = VirtualAddress & OFFSET_MASK
+        PhysAddr = (TLBEnty.PFN << SHIFT) | offset
+        Register = AccessMemory(PhysAddr)
+    }
+    else
+        RaiseException(PROTECTION_FAULT)
+}
+else//TLB miss
+{
+    //first, get page directory entry
+    PDIndex = (VPN & PD_MASK) >> PD_SHIFT
+    PDEAddr = PDBR + (PDIndex * sizeof (PDE))
+    PDE = AccessMemory(PDEAddr)
+    if(PDE.Valid == false)
+        RaiseException(SEGMENTATION_FAULT)
+    else
+    {
+        PTIndex = (VPN & PT_MASK) >> PT_SHIFT
+        PTEAddr = (PDE.PFN << SHIFT) + (PTIndex * sizeof (PTE))
+        PTE = AccessMemory(PTEAddr)
+        if(PTE.Valid == false)
+            RaiseException(SEGMENTATION_FAULT)
+        else if(AccessMemory(PTE.ProtectBits) == false)
+            RaiseException(PROTECTION_FAULT)
+        else if(PTE.Present == true)
+        {
+            TLB_Insert(VPN, PTE.PFN, PTE.ProtectBits)
+            RetryInsetuction()
+        }
+        else if(PTE.Present == false)
+            RaiseException(PAGE_FAULT)//Page-fault的产生
+    }
+}
+```
+
+页错误控制算法的逻辑如下：
+
+```c
+PFN = FindFreePhysicalPage()
+if(PFN == -1)
+    PFN = EvictPage()
+DiskRead(PTE.DiskAddr, pfn)
+PTE.present = true
+PTE.PFN = PFN
+RetryInstruction()
+```
+
+操作系统首先会找到一个空着的物理页帧，将其 `PFN` 记录下来（如果没有那么操作系统会将一些物理页换入到硬盘中），随后从 `PTE` 中记录了该物理页在硬盘中地址的项中读取硬盘，将 `PTE` 的 `PFN` 设置为刚刚得到空的物理页帧以及将存在位置 `1`，最后再重试该指令
+
+关于操作系统需要将哪些页从内存中换出到硬盘，有很多的策略，常见的有 `LRU` 和随机策略，我们在此不过多赘述
