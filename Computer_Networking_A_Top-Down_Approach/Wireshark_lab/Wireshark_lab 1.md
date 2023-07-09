@@ -1,8 +1,8 @@
-## Wireshark_lab 1
+# Wireshark_lab 1
 
 - [Wireshark\_lab 1](#wireshark_lab-1)
-- [准备](#准备)
-- [过程](#过程)
+  - [准备](#准备)
+  - [过程](#过程)
 
 
 ## 准备
