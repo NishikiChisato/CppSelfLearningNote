@@ -5,6 +5,9 @@
   - [过程](#过程)
     - [1. The Basic HTTP GET/response interaction](#1-the-basic-http-getresponse-interaction)
     - [2. The HTTP CONDITIONAL GET/response interaction](#2-the-http-conditional-getresponse-interaction)
+    - [3. Retrieving Long Documents](#3-retrieving-long-documents)
+    - [4. HTML Documents with Embedded Objects](#4-html-documents-with-embedded-objects)
+    - [5 HTTP Authentication](#5-http-authentication)
 
 
 ## 准备
@@ -18,6 +21,8 @@
 ## 过程
 
 ### 1. The Basic HTTP GET/response interaction
+
+> 对应文件 `HTTP1.pcapng`
 
 我们在浏览器输入 [http://gaia.cs.umass.edu/wireshark-labs/HTTP-wireshark-file1.html](http://gaia.cs.umass.edu/wireshark-labs/HTTP-wireshark-file1.html)，利用 `Wireshark` 抓包，得到如下结果（请求报文）：
 
@@ -50,6 +55,8 @@
 7. 我没找到。。。。。
 
 ### 2. The HTTP CONDITIONAL GET/response interaction
+
+> 对应文件 `HTTP2.pcapng`
 
 我们需要将浏览器缓存清空掉后，连续输入两次 [http://gaia.cs.umass.edu/wireshark-labs/HTTP-wireshark-file2.html](http://gaia.cs.umass.edu/wireshark-labs/HTTP-wireshark-file2.html)，得到如下结果：
 
@@ -95,3 +102,57 @@
 我们可以看到有 `IF_MODIFIED_SINCE` 字段，与第一次返回的 `Last-Modified` 字段中的值一致
 
 第二次返回的状态为 `304 Not Modified`，并没有实际返回内容，`content` 部分为空
+
+### 3. Retrieving Long Documents
+
+> 对应文件 `HTTP3.pcapng`
+
+我们将缓存清空后，在浏览器输入 [http://gaia.cs.umass.edu/wireshark-labs/HTTP-wireshark-file3.html](http://gaia.cs.umass.edu/wireshark-labs/HTTP-wireshark-file3.html)，得到如下结果：
+
+![Wireshark_lab2.7](../img/Wireshark_lab2.7.png)
+
+我们需要回答以下问题：
+
+12. How many HTTP GET request messages did your browser send? Which packet number in the trace contains the GET message for the Bill or Rights?
+13. Which packet number in the trace contains the status code and phrase associated 
+with the response to the HTTP GET request?
+14. What is the status code and phrase in the response?
+15. How many data-containing TCP segments were needed to carry the single HTTP response and the text of the Bill of Rights?
+
+我们浏览器只发送了一个 `HTTP` 请求报文，哪怕这是大文件，包含 `Bill or Rights` 的截图如下：
+
+![Wireshark_lab2.8](../img/Wireshark_lab2.8.png)
+
+对应的分组号为 `1525`
+
+包含 `status code` 和 `pharse` 的分组号为 `1525`，分别是 `200 OK`
+
+![Wireshark_lab2.9](../img/Wireshark_lab2.9.png)
+
+一个发送了 `4` 个 `TCP segments`，**一个 `TCP segments` 最多只能携带 `1448 Bytes`**
+
+### 4. HTML Documents with Embedded Objects
+
+> 对应文件：`HTTP4.pcapng`
+
+清空缓存后在浏览器输入 [http://gaia.cs.umass.edu/wireshark-labs/HTTP-wireshark-file4.html](http://gaia.cs.umass.edu/wireshark-labs/HTTP-wireshark-file4.html)
+
+这是一个 `base HTML` 文件，该文件中包含两张图片，**两张图片以 `URL` 的形式嵌入 `base HTML` 文件中**，我们得到如下结果
+
+![Wireshark_lab2.10](../img/Wireshark_lab2.10.png)
+
+我们需要回答以下问题：
+
+16. How many HTTP GET request messages did your browser send? To which Internet addresses were these GET requests sent?
+17. Can you tell whether your browser downloaded the two images serially, or whether they were downloaded from the two web sites in parallel? Explain.
+
+我们浏览器一共发送了三个 `HTTP` 请求，**对于每一个 `URL` 都需要发送一个 `HTTP` 请求**。结合上面的结果，我们得出：无论单次请求的文件有多大，只要该文件中没有其他的 `URL`，那么只会发送一次 `HTTP` 请求；如果有多个 `URL`，则会发送多个请求
+
+它们之间有时间差，因此是连续下载的而不是并行下载的
+
+### 5 HTTP Authentication
+
+> 对应文件 `HTTP5.pcapng`
+
+访问网站 [http://gaia.cs.umass.edu/wireshark-labs/protected_pages/HTTP-wireshark-file5.html](http://gaia.cs.umass.edu/wireshark-labs/protected_pages/HTTP-wireshark-file5.html)
+
