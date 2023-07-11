@@ -1,16 +1,17 @@
 # Wireshark_lab 2
 
 - [Wireshark\_lab 2](#wireshark_lab-2)
-  - [准备](#准备)
-  - [过程](#过程)
+  - [Prepare](#prepare)
+  - [Process](#process)
     - [1. The Basic HTTP GET/response interaction](#1-the-basic-http-getresponse-interaction)
     - [2. The HTTP CONDITIONAL GET/response interaction](#2-the-http-conditional-getresponse-interaction)
     - [3. Retrieving Long Documents](#3-retrieving-long-documents)
     - [4. HTML Documents with Embedded Objects](#4-html-documents-with-embedded-objects)
     - [5 HTTP Authentication](#5-http-authentication)
+  - [Conclusion](#conclusion)
 
 
-## 准备
+## Prepare
 
 实验指导书下载地址：[WIRESHARK LABS](https://gaia.cs.umass.edu/kurose_ross/wireshark.php)
 
@@ -18,7 +19,7 @@
 
 `Wireshark` 下载：[WIRESHARK](https://www.wireshark.org/download.html)
 
-## 过程
+## Process
 
 ### 1. The Basic HTTP GET/response interaction
 
@@ -167,3 +168,14 @@ with the response to the HTTP GET request?
 18.  What is the server’s response (status code and phrase) in response to the initial HTTP GET message from your browser?
 19.  When your browser’s sends the HTTP GET message for the second time, what new field is included in the HTTP GET message?
 
+第一次 `HTTP` 响应报文返回的是 `401 Unauthorized`。当第二次发送 `GET` 请求报文时，多了字段 `Authorization: Basic d2lyZXNoYXJrLXN0dWRlbnRzOm5ldHdvcms=`
+
+这里字符串 `d2lyZXNoYXJrLXN0dWRlbnRzOm5ldHdvcms=` 包含了我们输入的用户名与密码的加密 `encode`，对应的算法为 `Base 64`，我们可以对其进行解密 `decode`，便可以得到真实的用户名与密码
+
+## Conclusion
+
+我们得到以下几点结论：
+
+* 无论单个 `HTTP` 传输的文件有多大，只会有一次 `HTTP` 请求报文和一次 `HTTP` 响应报文，文件过大会有多个 `TCP segment`
+* 如果一个 `base HTML` 中有包含其他对象的 `URL`，那么需要多个 `HTTP` 请求报文去依次请求所有的对象
+* 如果网站需要验证登录，那么会有两次请求报文与两次响应报文。第一次响应报文会返回 `401 Unauthorized`，第二次请求报文会对输入的用户名与密码进行加密，第二次响应报文为正常的 `200 OK`

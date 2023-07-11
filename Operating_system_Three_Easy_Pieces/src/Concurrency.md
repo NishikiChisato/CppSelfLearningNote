@@ -3,6 +3,10 @@
 - [Concurrency](#concurrency)
   - [Overview](#overview)
   - [Thread API](#thread-api)
+    - [Thread](#thread)
+    - [Lock](#lock)
+    - [Condition](#condition)
+  - [Lock](#lock-1)
 
 
 ## Overview
@@ -73,4 +77,93 @@ mov %eax, 0x8049a1c
 因此，我们才要求线程互斥 `mutual exclusion` 地访问临界区
 
 ## Thread API
+
+> 注：这些均为 `C` 语言的多线程函数。所有包含 `pthread.h` 头文件的在链接时需要带 `-lpthread` 参数才能通过
+
+### Thread
+
+线程用 `pthread_t` 表示，需要使用线程时要引入 `pthread.h` 头文件
+
+线程创建函数：
+
+```cpp
+int pthread_create(pthread_t* thread,
+                   const pthread_attr_t* attr, 
+                   void* (*start_routine)(void*), 
+                   void* arg)
+```
+
+各参数含义如下：
+
+* `thread`：一个指向 `pthread_t` 的指针
+* `pthread_attr_t`：通过调用 `pthread_attr_init()` 进行初始化线程属性
+* `start_routine`：一个函数指针，表明线程应该从哪里开始执行
+* `arg`：传递给线程开始执行的函数的参数
+
+需要说明的是，这个函数指针默认参数为 `void*`，默认返回值为 `void*`。**用 `void*` 是为了能够接收任何类型，哪怕不是指针变量也可以**。**如果需要传递多个参数，只能用结构体将其封装**
+
+该函数在线程**创建成功后，会返回 `0`**；如果线程创建失败，则会返回一个 `error number`：
+
+* `EAGAIN`：系统资源不足以去创建一个新线程
+* `EINVAL`：`attr` 无效
+* `EPERM`：没有权限设定 `attr` 中指定的参数或调度策略
+
+线程创建后，线程会开始执行，如果我需要等待该线程执行完毕，则需要使用 `pthread_join()` 函数：
+
+```cpp
+int pthread_join(pthread_t thread, 
+                 void** retval)
+```
+
+* `thread`：表示需要等待执行完成的线程
+* `retval`：表示该线程的返回值
+
+如果此函数**正确执行，那么返回 `0`**；如果失败，则返回 `error number`：
+
+* `EDEADLK`：检测到死锁
+* `EINVAL`：另外一个线程正在等待此线程
+* `ESRCH`：没有该线程 `ID`
+
+### Lock
+
+`pthread_mutex_t` 用于表示一个锁变量的类型，以下两组函数可以用于获取锁与释放锁：
+
+```cpp
+int pthread_mutex_lock(pthread_mutex_t* mutex)
+int pthread_mutex_unlock(pthread_mutex_t* mutex)
+```
+
+锁的初始化可以是动态的也可以是静态的：
+
+```cpp
+//static
+pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER
+//dynamic
+int rc = pthread_mutex_init(&lock, NULL)
+assert(rc == 0)
+```
+
+动态初始化的第二个参数是一组可选的属性，`NULL` 表示默认值。该函数返回零表示执行成功
+
+### Condition
+
+条件变量用类型 `pthread_cond_t` 表示，静态初始化为：
+
+```cpp
+pthread_cond_t cond = PTHREAD_COND_INITIALIZER
+```
+
+关于条件变量常用的函数有两个，一个用于当前线程等待某个条件，当条件不满足时该线程进入休眠状态：
+
+```cpp
+int pthread_cond_wait(pthread_cond_t* cond, pthread_mutex_t* mutex)
+```
+
+另一个用于表示当前条件已经满足，可以唤醒休眠的线程
+
+```cpp
+int pthread_cond_signal(pthread_cond_t* cond)
+```
+
+## Lock
 
