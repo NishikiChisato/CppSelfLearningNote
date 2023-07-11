@@ -156,3 +156,14 @@ with the response to the HTTP GET request?
 
 访问网站 [http://gaia.cs.umass.edu/wireshark-labs/protected_pages/HTTP-wireshark-file5.html](http://gaia.cs.umass.edu/wireshark-labs/protected_pages/HTTP-wireshark-file5.html)
 
+这个网站需要登陆验证，用户名与密码分别是：`wireshark-students`、`network`。我们主要观察需要验证时 `HTTP` 报文的情况
+
+报文情况如下：
+
+![Wireshark_lab2.12](../img/Wireshark_lab2.12.png)
+
+可以看到我们浏览器首先发送一个 `GET` 请求，随后收到 `401 Unauthorized` 的报文。之后我们浏览器再次发送 `GET` 请求，此次请求头带有 `Authorization` 字段，用于表示用户名与密码，之后再次收到带有内容的响应报文，完成请求
+
+18.  What is the server’s response (status code and phrase) in response to the initial HTTP GET message from your browser?
+19.  When your browser’s sends the HTTP GET message for the second time, what new field is included in the HTTP GET message?
+
