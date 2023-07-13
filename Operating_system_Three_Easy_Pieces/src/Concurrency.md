@@ -7,6 +7,8 @@
     - [Lock](#lock)
     - [Condition](#condition)
   - [Lock](#lock-1)
+    - [Test-And-Set](#test-and-set)
+    - [Compare-And-Swap](#compare-and-swap)
 
 
 ## Overview
@@ -166,4 +168,97 @@ int pthread_cond_signal(pthread_cond_t* cond)
 ```
 
 ## Lock
+
+从前面的例子中我们看到，由于单处理器上的**中断**，我们无法做到原子 `atomic` 地执行一系列的指令。由于我们无法关闭硬件中断，因此我们需要引入锁 `lock` 这个概率来解决这个问题
+
+我们可以对临界区 `critical section` 加锁，保证只有持有锁的线程可以进入该临界区，其余所有没有持有锁的线程都无法进入该临界区，这样我们便可以保证该临界区的代码像单条原子指令一样执行。类似这样：
+
+```cpp
+lock_t mutex;
+lock(&mutex);
+cnt = cnt + 1;//critical section
+unlock(&mutex);
+```
+
+锁是一个变量，用于保存当前时刻锁的状态，一个锁**要么是被持有的 `acquired, locked, held`，要么是可用的 `avaliable, unlocked, free`**。对于一个可获取的锁而言，`lock` 会对锁变量进行赋值，保存当前锁的状态（该线程获得锁），直到该线程调用 `unlock` 归还锁之前，如果有其他线程调用 `lock`，那么它们会被阻塞（因为锁只有一个，并且已被占用）。当持有锁的线程调用 `unlock` 后，会释放该锁，被 `lock` 卡住的其中一个线程会重新获得该锁
+
+> 为什么不能用控制中断 `control interrupt` 的方法解决并发 `concurrency`
+>
+> 第一，这将运行线程使用特权 `privilege` 操作。我们在操作系统中引入中断的原因就是保证操作系统每隔一段固定时间就拥有对系统的最高控制权
+>
+> 第二，不支持多处理器。哪怕可以关闭某个处理器的中断，该线程却可以运行在其他的处理器上
+>
+> 第三，关闭中断的过程中会导致中断丢失。如果关闭中断的过程中，磁盘设备完成了 `I/O` 请求，由于处理器屏蔽了中断，因此这将导致该中断被忽略
+
+我们可以用锁去解决并发的问题，那么问题是，**硬件和操作系统该如何实现一个锁**，下面我们介绍几种**硬件原语 `hardware primitives`**，操作系统可以利用这些硬件原语来实现一个锁
+
+我们主要的工作为，实现 `lock_t` 类型和 `lock(), unlock()` 函数
+
+### Test-And-Set
+
+`test and set` 也被称为 `atomic exchange`，我们用一个变量来表示该锁是否被某些 线程占用。初始时该变量为零，当第一次调用时将该变量设置为一；当该线程离开临界区时，再将该变量设置为零，有：
+
+```cpp
+typedef struct lock_t { int flag; } lock_t;
+void init(lock_t* lock)
+{
+  //0 is available, 1 is held
+  lock->flag = 0;
+}
+void lock(lock_t* lock)
+{
+    while(mutex->flag == 1)
+        ;//spin
+    lock->flag = 1;
+}
+void unlock(lock_t* lock)
+{
+    lock->flag = 0;
+}
+```
+
+这个代码抛开性能 `performance` 问题不谈，有一个很严重的问题是，它并不能解决并发
+
+当第一个线程在执行完 `while` 判断后，这个时候判断为 `false`，它可以对 `flag` 设置为一，如果这时时钟中断发送，第二个线程开始执行。我们会发现这两个线程都对 `flag` 进行了设置，也就是二者都进入了临界区，这陷入无法解决并发的问题
+
+我们需要硬件的支持，具体地，我们引入一个函数，硬件可以原子地执行以下代码：
+
+```cpp
+int TestAndSet(int* old_ptr, int new_val)
+{
+    int old = *old_ptr;
+    *old_ptr = new_val;
+    return old;
+}
+```
+
+硬件可以原子的执行该函数中的所有指令，因此可以保证在执行该函数的过程中，不会被时钟中断打断。因此我们可以将锁更改为如下设计：
+
+```cpp
+typedef struct lock_t { int flag; } lock_t;
+
+void init(lock_t* lock)
+{
+    lock->flag = 0;
+}
+
+void lock(lock_t* lock)
+{
+    while(TestAndSet(&lock->flag, 1) == 1)
+        ;//spin
+}
+
+void unlock(lock_t* lock)
+{
+    lock->flag = 0;
+}
+```
+
+由于 `TestAndSet` 操作为原子操作，因此我们在执行完 `while` 的判断时，如果锁没有被持有的话，我们已经对该锁进行了赋值，那么当前线程就可以直接跳出循环，进入临界区。通过避免在 `while` 循环后面设置锁变量，我们可以解决让线程互斥地进入临界区这一问题
+
+这种锁被称为自旋锁 `spin lock`，这是因为被阻塞进程会一直自旋，在自己的 `CPU` 时间片内等待，直到锁可用
+
+在单 `CPU` 上，若有 $N$ 个线程并发执行，那么对于一个临界区会有 $N-1$ 个线程等待。对于每个被阻塞的线程，它们在执行的时间片内都会空转，白白浪费 `CPU` 的时间，因此我们可以推断出，自旋锁会导致**饥饿** `starvation` 的情况
+
+### Compare-And-Swap
 
