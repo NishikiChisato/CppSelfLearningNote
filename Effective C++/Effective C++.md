@@ -1,9 +1,3 @@
----
-title: Effective C++ 笔记
-tags: Effective C++
-categories: Effective C++
----
-
 # 1.尽量以 const, enum, inline 替换 #define
 
 

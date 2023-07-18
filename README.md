@@ -2,7 +2,29 @@
 
 本仓库用于保存C++相关学习笔记
 
-## 文件结构
+## Includes
+
+* [ ] `Computer System: A Programmer's Perspective`
+  * [x] `Chapter 2: Representing and Manipulating Information`
+  * [x] `Chapter 3: Machine-Level Representation of Programs`
+  * [ ] `Chapter 4: Processor Architecture` (**In Process**)
+  * [ ] `Chapter 5: Optimizing Program Performance`
+  * [ ] `Chapter 6: The Memory Hierarchy`
+  * [ ] `Chapter 7: Linking`
+  * [ ] `Chapter 8: Exceptional Control Flow`
+  * [ ] `Chapter 9: Virtual Memory`
+  * [ ] `Chapter 10: System-Level I/O`
+  * [ ] `Chapter 11: Network Programming`
+  * [ ] `Chapter 12: Concurrent Programming`
+
+* [ ] `Operating System: Three Easy Pieces`
+  * [x] `Virtualization`
+  * [ ] `Concurrency` (**In Process**)
+  * [ ] `Persistence`
+
+* [x] `Effective C++`
+
+## File Structure
 
 ```
 │  README.md
