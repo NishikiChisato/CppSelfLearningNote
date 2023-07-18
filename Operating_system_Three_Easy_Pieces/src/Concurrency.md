@@ -262,3 +262,31 @@ void unlock(lock_t* lock)
 
 ### Compare-And-Swap
 
+`CompareAndSwap` 的伪代码为：
+
+```c
+int CompareAndSwap(int* ptr, int expected, int new_val)
+{
+    int actual = *ptr;
+    if(actual == expected) 
+        *ptr = new_val;
+    return actual;
+}
+```
+
+函数行为是检查 `ptr` 指向的值是否与 `expected` 相等，如果相同的话则将其更新为 `new_val`，否则什么事情都不做
+
+用该硬件原语实现 `lock` 的代码为：
+
+```c
+void lock(lock_t* lock)
+{
+    while(CompareAndSwap(&lock->flag, 0, 1) == 1)
+        ;
+}
+```
+
+也就是，当前线程期望 `lock->flag` 处的值为 `0`（这表示当前没有线程占有锁），并将其设置为新值 `1`，如果成功返回则进入临界区（成功返回说明旧值为 `0`）
+
+锁的实现主要是通过硬件和操作系统的配合来完成的，书中还有另外几种硬件操作
+
