@@ -4,6 +4,11 @@
   - [Task 1](#task-1)
     - [C++ Basic](#c-basic)
     - [Critical Component](#critical-component)
+  - [Task 2](#task-2)
+    - [Concurrency](#concurrency)
+  - [Task 3](#task-3)
+    - [Debug bustub](#debug-bustub)
+  - [Task 4](#task-4)
 
 
 ## Task 1
@@ -64,3 +69,82 @@ ptr = std::const_pointer_cast<TrieNode>(ptr->children_[key[i]]);
 > 这个问题当时把我卡死了，我一直在想那些灰色的节点该如何释放
 
 
+
+## Task 2
+
+### Concurrency
+
+在这一部分，我们需要让 `Trie` 树支持并发。对于常规的数据结构（不使用 `COW`），我们所使用的是 `reader/writer lock`，也就是说，允许**多个读者同时读取**，但写者**必须等待所有读者读取完毕后才能写入**
+
+这种设计的弊端是读者与写者不能同时进行，并发度会降低，并且如果一直有读者到来，那么写者将会出现饥饿情况
+
+使用 `COW` 则可以提高并发度，因为每次对于 `Trie` 树的修改都会 `clone` 一条新的支路，因此**读取和写入可以同时进行**，也就是说在多个读者读取的时候，写者依旧可以写入
+
+由于读取时可能该节点之后被删除，因此每次读取除了返回该节点对应的值，还会返回整颗 `Trie` 树的根节点
+
+这里使用了 `std::optional` 作为返回值，这个类是对返回值的结果做了一层封装。如果一个函数的返回值没有意义，但并不是错误，仅仅是作为某种标识（例如返回 `-1, nullptr` 用于表示该函数返回一个不需要的值），那么我们便可以使用 `std::optional`。如果是正常的结果那么直接赋值即可，特殊的标识则返回 `nullopt`
+
+`TrieStore` 中含有两个 `mutex`，`root_lock_` 用于保证对根节点的**访问与修改**是按序列化的 `sequential`，换句话说，它用于保证所有线程对根节点的访问与修改只能依次进行，不允许出现同时进行；`write_lock_` 用于保证写者是按序列化的，因为我们不允许两个写者同时修改 `Trie` 树
+
+对于一个共享变量的修改，处于 `critical section` 的操作只有三个：读取、更新、写回。因此对于写者而言，这三个操作**务必要保证其原子性**，也就是说只有当前线程完全执行完这三个操作后，才允许其他线程执行这三个操作。因此，`write_lock_` 的作用就是保证**只能有一个线程执行这三个操作**
+
+## Task 3
+
+### Debug bustub
+
+`bustub` 所采用的均为 `gtest`，在调试模式下如果我们想使用 `gdb` 进行调试的话，可以进行如下操作：
+
+```bash
+make trie_debug_test
+cgdb ./test/trie_debug_test
+```
+
+在 `cgdb` 中，如果我们需要跳转到 `trie_debug_test.cpp` 文件的某一行，那么我们只需要在那一行打断点即可：
+
+```cgdb
+b trie_debug_test.cpp:22
+```
+
+上面这一行代码就是在 `trie_debug_test.cpp` 文件的第 `22` 行打断点
+
+需要说明的是，我们在本地计算得出的结果无法通过 `gradescope` 的测评，在 `discord` 上有对应的解答：
+
+```
+likern — 2023/02/15 20:33
+Has anyone solved TrieDebugger.TestCase?
+
+I've written manually (on the paper) and still get this test failed. While I'm pretty sure I understand how this works (all other tests passed)
+
+Alex Chi — 2023/02/15 23:29
+It is possible that your environment produces different random numbers than the grading environment.
+In case your environment is producing different set of random numbers than our grader, replace your TrieDebugger test with:
+auto trie = Trie();
+trie = trie.Put<uint32_t>("65", 25);
+trie = trie.Put<uint32_t>("61", 65);
+trie = trie.Put<uint32_t>("82", 84);
+trie = trie.Put<uint32_t>("2", 42);
+trie = trie.Put<uint32_t>("16", 67);
+trie = trie.Put<uint32_t>("94", 53);
+trie = trie.Put<uint32_t>("20", 35);
+trie = trie.Put<uint32_t>("3", 57);
+trie = trie.Put<uint32_t>("93", 30);
+trie = trie.Put<uint32_t>("75", 29);
+```
+
+## Task 4
+
+这个部分很简单，在 `string_expression.h` 当中完成两个大小写转换函数，然后再在 `plan_func_call.cpp` 当中去写一下接口即可
+
+这两个文件可能不好找，可以使用 `find` 指令来进行查找：
+
+```bash
+find ./ -name string_expression.h
+find ./ -name "plan_func_call.cpp"
+```
+
+用法为：
+
+```bash
+# filename 加不加引号都可以
+find /path/to/search -name "filename"
+```
