@@ -68,3 +68,59 @@ precise - 精确的
 
 variable - 变量，valuable - 有价值的、宝贵的
 
+be comprised of - 由什么组成
+
+exploit - 利用
+
+underlying - 底层
+
+over time - 随着时间的推移
+
+emerge - 出现
+
+the vast majority of - 绝大多数
+
+consecutive - 连续的
+
+omit - 省略 -> be omitted from - 省略
+
+as far as/in term of - 就...而言，通过...
+
+analogy - 类比
+
+at a point in time - 在某个时间点
+
+efficient means - 有效手段
+
+associated with - 关联于
+
+be thought of as - 被认为是
+
+exclude - 排除
+
+namely - 即
+
+even then - 即便如此
+
+signify - 标志着，标志
+
+suppose as before that - 假设和以前一样
+
+eliminate - 消除
+
+if at all - 如果有的话 -> if at all possible - 如果有可能的话
+
+in addition to - 除了
+
+sufficient - 足够
+
+distinguish - 区分
+
+restrict - 限制
+
+extraneous - 无关
+
+porper - 适当、恰当
+
+customary - 习惯
+
