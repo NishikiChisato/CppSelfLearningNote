@@ -124,3 +124,110 @@ porper - 适当、恰当
 
 customary - 习惯
 
+categorize - 分类、归类
+
+terse - 简洁的
+
+survey - 概况
+
+mechanism - 机制
+
+indice - 索引，index - 索引
+
+defer - 推迟，refer - 指
+
+violate - 违反
+
+retain - 保留
+
+drastic - 剧烈
+
+alter - 改变
+
+clause - 子句、从句 -> something consist of there clauses
+
+as well as - 以及
+
+notable - 特别是
+
+notation - 符号
+
+alias - 别名
+
+enclose - 附上 -> SQL specifies strings by enclosing them in single quotes, for example, 'Computer'
+
+vice versa - 反之亦然
+
+denote - 表示
+
+workaround - 解决办法
+
+likewise - 同样
+
+circumstance - 情况
+
+as was the case for - 就像...的情况一样
+
+as a result of - 由于...
+
+a substantial amount of - 大量
+
+in the preceding example - 在先前的例子中
+
+concise - 简洁的
+
+... along with ... - 以及
+
+一些从句：
+
+* in which - 其中
+* from which - 从中、其中
+
+一些副词
+
+* over - 在...之间（指时间），越过...（指物体）
+
+as intended - 如预期
+
+more generally - 更普遍地
+
+aside from - 除了
+
+on demand - 一经请求
+
+periodically - 定期地
+
+weigh - 衡量
+
+preceding - 先前的
+
+proceed - 继续、执行
+
+An alternative, and offen preferable, approach to ... - 一种可能的选择（通常是更好的）是 ...
+
+pertaining to - 关于
+
+error diagnostic - 错误诊断
+
+simulate - 模拟
+
+... is a matter of ... - ...是一个...的问题
+
+propagate - 传播
+
+provided that - 前提是
+
+populate - 填充
+
+hierarchy - 层次
+
+coordinate - 协调
+
+by means of - 借助于
+
+proportion - 部分
+
+a fraction of - 一小部分
+
+It's worth nothing that - 值得注意的是
+

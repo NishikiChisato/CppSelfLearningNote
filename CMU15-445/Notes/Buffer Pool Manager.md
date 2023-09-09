@@ -8,6 +8,10 @@
       - [Relation \& tuple](#relation--tuple)
       - [Schema \& Instance \& Domain](#schema--instance--domain)
       - [Superkey \& Candicate Key](#superkey--candicate-key)
+      - [Referential integrity constrain \& foreign-key constrain](#referential-integrity-constrain--foreign-key-constrain)
+  - [Introduction to SQL](#introduction-to-sql)
+  - [Intermediate SQL](#intermediate-sql)
+    - [natural join \& outer join](#natural-join--outer-join)
 
 
 ## Concept
@@ -80,4 +84,24 @@ Formally, Let $R$ denote the set of attributes in relation $r$, if we say subset
 If a superkey has no porper subset, such minimal superkey are called *candidate key*
 
 We shall use the term *primary key* to denote *candidate key*, and to be clear, the meaning of these two concept are exactly the same
+
+#### Referential integrity constrain & foreign-key constrain
+
+> Page: 46
+
+The *foreign-key constrain* requires that attribute(s) of referencing relation must be the **primary key** of the referenced relation. the *referential integrity constrain*, on the other hand, simply requires that the value appearing in referencing relation **must** appears in referenced relation
+
+---
+
+## Introduction to SQL
+
+
+
+## Intermediate SQL
+
+### natural join & outer join
+
+Suppose we have two relation called $A$ and $B$ respectively, and only attribute they shared. *Natural join* operation will list the collection of tuple that have the same value of this attribute in both realtions. The tuple which don't appear in the result relation have two main reason, one is corresponding attribute value are not same; the other is this tuple of this attribute in first relation don't appear in the second relation
+
+Therefore, *outer join* is a workaround, which will list those tuple don't appear in second relation
 
