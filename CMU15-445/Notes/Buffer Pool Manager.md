@@ -9,9 +9,13 @@
       - [Schema \& Instance \& Domain](#schema--instance--domain)
       - [Superkey \& Candicate Key](#superkey--candicate-key)
       - [Referential integrity constrain \& foreign-key constrain](#referential-integrity-constrain--foreign-key-constrain)
+      - [Session](#session)
   - [Introduction to SQL](#introduction-to-sql)
   - [Intermediate SQL](#intermediate-sql)
     - [natural join \& outer join](#natural-join--outer-join)
+  - [Advanced SQL](#advanced-sql)
+    - [Common Table Expression(CTE)](#common-table-expressioncte)
+    - [Recursive CTE](#recursive-cte)
 
 
 ## Concept
@@ -91,6 +95,10 @@ We shall use the term *primary key* to denote *candidate key*, and to be clear, 
 
 The *foreign-key constrain* requires that attribute(s) of referencing relation must be the **primary key** of the referenced relation. the *referential integrity constrain*, on the other hand, simply requires that the value appearing in referencing relation **must** appears in referenced relation
 
+#### Session
+
+The session, in database, refers to a connection established between a user and a database system for a special period of time. During the session, database system would keep track of session-special informance(e.g. identity, privilege), user can also perform multi operation. The session remains active until user log out, disconnect, or set timeout period is reached. 
+
 ---
 
 ## Introduction to SQL
@@ -104,4 +112,22 @@ The *foreign-key constrain* requires that attribute(s) of referencing relation m
 Suppose we have two relation called $A$ and $B$ respectively, and only attribute they shared. *Natural join* operation will list the collection of tuple that have the same value of this attribute in both realtions. The tuple which don't appear in the result relation have two main reason, one is corresponding attribute value are not same; the other is this tuple of this attribute in first relation don't appear in the second relation
 
 Therefore, *outer join* is a workaround, which will list those tuple don't appear in second relation
+
+---
+
+## Advanced SQL
+
+### Common Table Expression(CTE)
+
+The common table expression(CTE) allows you to create a *temporar*y* named result set that aviable temporarily to `SELECT`, `UPDATE`, `DELETE` clause
+
+### Recursive CTE
+
+A recursive common table expression (CTE) is a CTE that references itself. By doing so, the CTE repeatedly executes, returns subsets of data, until it returns the complete result set.
+
+The execution order of a recursive CTE is as follows:
+
+* First, execute the anchor member to form the base result set (R0), **use this result for the next iteration**.
+* Second, execute the recursive member **with the input result set from the previous iteration** (Ri-1) and return a sub-result set (Ri) until the termination condition is met.
+* Third, combine all result sets R0, R1, … Rn using UNION ALL operator to produce the final result set.
 
