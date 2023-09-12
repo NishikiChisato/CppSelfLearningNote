@@ -231,3 +231,9 @@ a fraction of - 一小部分
 
 It's worth nothing that - 值得注意的是
 
+essentially - 本质上
+
+typically - 通常
+
+so forth - 以此类推
+

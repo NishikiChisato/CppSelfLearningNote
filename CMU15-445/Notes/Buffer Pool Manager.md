@@ -1,24 +1,26 @@
 # Buffer Pool Manager
 
 - [Buffer Pool Manager](#buffer-pool-manager)
-  - [Concept](#concept)
+  - [Relational Model](#relational-model)
     - [Database \& DBMS \& Data model](#database--dbms--data-model)
-    - [Relational Model](#relational-model)
-      - [Concept](#concept-1)
-      - [Relation \& tuple](#relation--tuple)
-      - [Schema \& Instance \& Domain](#schema--instance--domain)
-      - [Superkey \& Candicate Key](#superkey--candicate-key)
-      - [Referential integrity constrain \& foreign-key constrain](#referential-integrity-constrain--foreign-key-constrain)
-      - [Session](#session)
-  - [Introduction to SQL](#introduction-to-sql)
-  - [Intermediate SQL](#intermediate-sql)
+    - [Relational Model](#relational-model-1)
+  - [SQL](#sql)
+    - [Relation \& tuple](#relation--tuple)
+    - [Schema \& Instance \& Domain](#schema--instance--domain)
+    - [Superkey \& Candicate Key](#superkey--candicate-key)
+    - [Referential integrity constrain \& foreign-key constrain](#referential-integrity-constrain--foreign-key-constrain)
+    - [Session](#session)
     - [natural join \& outer join](#natural-join--outer-join)
-  - [Advanced SQL](#advanced-sql)
     - [Common Table Expression(CTE)](#common-table-expressioncte)
     - [Recursive CTE](#recursive-cte)
+  - [Database Storage](#database-storage)
+    - [Database Page](#database-page)
+    - [Page Layout](#page-layout)
+    - [Slotted-Page](#slotted-page)
+    - [Tuple Layout](#tuple-layout)
 
 
-## Concept
+## Relational Model 
 
 ### Database & DBMS & Data model
 
@@ -33,8 +35,6 @@ Consider a database models a digital music store, the two basic entities aes art
 *Data model* is a collection of concept for describing the data in database. *Relational model* is one of the *data model*
 
 ### Relational Model
-
-#### Concept
 
 Early database application were diffcult to build and maintain because there was a tight copluing between logical layers and physical layers, therefore the *relational model* was gradually proposed.
 
@@ -52,7 +52,9 @@ Relation data model defines three concepts:
 * Integrity: Ensure the database's contents satisfy constrains(for example the value of attribute has to number or string)
 * Manipulation: How to access and modify the database's content
 
-#### Relation & tuple
+## SQL
+
+### Relation & tuple
 
 *Relation* is an unordered set that contain the relationship of attributes that represent *entities*. Therefore, *relation* simplely a unordered set, and it contain a series of attrbutes, all of which have corresponding value.
 
@@ -63,7 +65,7 @@ A *relations* has two *key*, which is *primary key* which **uniquely** identifie
 * *Relation* has a lot of pairs which contain *key* and *tuple*
 * *tuple* simplely a set of value, each of which corresponding to single attribute
 
-#### Schema & Instance & Domain
+### Schema & Instance & Domain
 
 *Schema* is a description of a particular collection of data based on *data model*.
 
@@ -75,7 +77,7 @@ That's to say, in the *relational model*, data are represented in the form of ta
 
 Schema and instance can be understood by analogy to programming language. The *database scaema* is corresponding to the variable declarations, and the value of the variable at a point in time corresponding to the *database instance*
 
-#### Superkey & Candicate Key
+### Superkey & Candicate Key
 
 We require that no two tuple in relation have exactly the same value for each attribute, Therefore we need a way to distinguish two tuple. We use the concept of *superkey* to solve it, *superkey* is a set of **one or more attribute** that can specify uniquely a tuple in relation
 
@@ -89,33 +91,22 @@ If a superkey has no porper subset, such minimal superkey are called *candidate 
 
 We shall use the term *primary key* to denote *candidate key*, and to be clear, the meaning of these two concept are exactly the same
 
-#### Referential integrity constrain & foreign-key constrain
+### Referential integrity constrain & foreign-key constrain
 
 > Page: 46
 
 The *foreign-key constrain* requires that attribute(s) of referencing relation must be the **primary key** of the referenced relation. the *referential integrity constrain*, on the other hand, simply requires that the value appearing in referencing relation **must** appears in referenced relation
 
-#### Session
+### Session
 
 The session, in database, refers to a connection established between a user and a database system for a special period of time. During the session, database system would keep track of session-special informance(e.g. identity, privilege), user can also perform multi operation. The session remains active until user log out, disconnect, or set timeout period is reached. 
 
----
-
-## Introduction to SQL
-
-
-
-## Intermediate SQL
 
 ### natural join & outer join
 
 Suppose we have two relation called $A$ and $B$ respectively, and only attribute they shared. *Natural join* operation will list the collection of tuple that have the same value of this attribute in both realtions. The tuple which don't appear in the result relation have two main reason, one is corresponding attribute value are not same; the other is this tuple of this attribute in first relation don't appear in the second relation
 
 Therefore, *outer join* is a workaround, which will list those tuple don't appear in second relation
-
----
-
-## Advanced SQL
 
 ### Common Table Expression(CTE)
 
@@ -130,4 +121,41 @@ The execution order of a recursive CTE is as follows:
 * First, execute the anchor member to form the base result set (R0), **use this result for the next iteration**.
 * Second, execute the recursive member **with the input result set from the previous iteration** (Ri-1) and return a sub-result set (Ri) until the termination condition is met.
 * Third, combine all result sets R0, R1, … Rn using UNION ALL operator to produce the final result set.
+
+## Database Storage
+
+### Database Page
+
+DBMS store database as one or more file in disk, and this file is seprated by several partition called *block(page)*
+
+Hardware page usually *4K*, OS page usually *4K*, and database page vary from *1K* to *16K*
+
+The read and write operation to Hardware page is *atomic*
+
+### Page Layout
+
+Every page include header which contain *metadata*:
+
+* Page size
+* CheckSum
+* Self-containment(This page contain all informance regarding to read and write this page)
+
+In a database file, every page(block) are organized into certain structure, There are two commonly used ones: Slotted page and log structured
+
+### Slotted-Page
+
+The header contain the number of slot and slot array
+
+* When insertint a tuple, the slot array grows from begin to end and the data grow from end to begin
+* When deleteint a tuple, the tuples before deleted tuple will be moved backword 
+
+### Tuple Layout
+
+Every tuple contain a header, which include the metadata of this tuple
+
+The *bitmap* stored in header used to represent whether certain attribute is *NULL*
+
+The tuple data typically store in the order specified when create this relation 
+
+Each tuple have a *unique identifier*(i.e. *page, slot id/offset*) 
 
