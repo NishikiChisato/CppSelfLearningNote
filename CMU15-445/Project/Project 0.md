@@ -1,6 +1,6 @@
-# project 0
+# Project 0
 
-- [project 0](#project-0)
+- [Project 0](#project-0)
   - [Task 1](#task-1)
     - [C++ Basic](#c-basic)
     - [Critical Component](#critical-component)
