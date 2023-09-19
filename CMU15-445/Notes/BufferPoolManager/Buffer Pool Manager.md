@@ -14,9 +14,11 @@
     - [Common Table Expression(CTE)](#common-table-expressioncte)
     - [Recursive CTE](#recursive-cte)
   - [Database Storage](#database-storage)
-    - [Database Page](#database-page)
+    - [File Storage](#file-storage)
+      - [Heap File Organization](#heap-file-organization)
     - [Page Layout](#page-layout)
-    - [Slotted-Page](#slotted-page)
+      - [Slotted-Page](#slotted-page)
+      - [Log-Structured storage](#log-structured-storage)
     - [Tuple Layout](#tuple-layout)
 
 
@@ -124,13 +126,26 @@ The execution order of a recursive CTE is as follows:
 
 ## Database Storage
 
-### Database Page
+### File Storage
 
-DBMS store database as one or more file in disk, and this file is seprated by several partition called *block(page)*
+DBMS store database as one or more **file** in disk, and this file is seprated by several partition called *block(page)*. Different DBMS manage page in file in different way: 
 
-Hardware page usually *4K*, OS page usually *4K*, and database page vary from *1K* to *16K*
+* Heap File Organization
+* Tree File Organization
 
-The read and write operation to Hardware page is *atomic*
+Hardware page usually *4K*, OS page usually *4K*, and database page vary from *1K* to *16K*. The read and write operation in Hardware page is *atomic*
+
+#### Heap File Organization
+
+The *heap file* is an unordered collection of pages with tuple that store in random order. Therefore, in single file, we can easily find a specific page by adding the *begin address* and *offset*. On the other hand, in multiple file, we need meta-data to track which page store in which file and which file has free space
+
+![HeapFile](./img/HeapFile.png)
+
+DBMS also maintain some special page called *directory*, which store the location of the page in which we store data. Intuitively, the role of directory is similar to index
+
+![Directory](./img/Directory.png)
+
+We must make sure that the content of directory is in sync with data page, both of which are simultaneously update
 
 ### Page Layout
 
@@ -142,12 +157,52 @@ Every page include header which contain *metadata*:
 
 In a database file, every page(block) are organized into certain structure, There are two commonly used ones: Slotted page and log structured
 
-### Slotted-Page
+#### Slotted-Page
 
 The header contain the number of slot and slot array
 
-* When insertint a tuple, the slot array grows from begin to end and the data grow from end to begin
+* When insertint a tuple, the slot array grows from the front to the back and the data grow from the back to the front
 * When deleteint a tuple, the tuples before deleted tuple will be moved backword 
+
+With this structure, we can easily **store variable-length tuple**
+
+The change process is shown the following figure below
+
+![Slotted_Page1](./img/Slotted_Page1.png)
+
+If we add a new tuple into this page, the length of *slotted array* would grow from the front to the back, the length of data tuple would grow in the opposite direction
+
+![Slotted_Page2](./img/Slotted_Page2.png)
+
+When we delete tuple 3, as the following figure shown, we should move the tuple at the right position of the deleted tuple to left 
+
+![Slotted_Page3](./img/Slotted_Page3.png)
+
+![Slotted_Page4](./img/Slotted_Page4.png)
+
+#### Log-Structured storage 
+
+Instead of storing the content of tuple in file, *log-structured storage* simply sotre the change informantion in file
+
+![Log_Structured1](./img/Log_Structured1.png)
+
+When the page get full, we should immediately write out to disk
+
+![Log_Structured2](./img/Log_Structured2.png)
+
+If we intend to read specific tuple, with a given *tuple id*, DBMS would fild the newest log record corresponding to that id. Also, we can maintain several index which map *tuple id* to newest record
+
+![Log_Structured3](./img/Log_Structured3.png)
+
+Due to the log would gorw forever, DBMS needs to compact this log periodically
+
+![Log_Structured4](./img/Log_Structured4.png)
+
+After that, DBMS needs to sort this log in page, which would mitigate retireve pressure
+
+![Log_Structured5](./img/Log_Structured5.png)
+
+The downside of this approach are twofold. First, it would result in *Write-Amplification*, suppoes that I insert a tuple and never update it again, when we perform compaction, this tuple would **REPEATEDLY** read into memory and written to disk. Second, the cost of compaction is much too expensive
 
 ### Tuple Layout
 
