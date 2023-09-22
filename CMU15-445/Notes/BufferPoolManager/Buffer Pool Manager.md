@@ -141,7 +141,7 @@ The *heap file* is an unordered collection of pages with tuple that store in ran
 
 ![HeapFile](./img/HeapFile.png)
 
-DBMS also maintain some special page called *directory*, which store the location of the page in which we store data. Intuitively, the role of directory is similar to index
+DBMS also maintain some special page called *directory*, which store the location of the page in which we store data **in database file**. Intuitively, the role of directory is similar to index
 
 ![Directory](./img/Directory.png)
 
