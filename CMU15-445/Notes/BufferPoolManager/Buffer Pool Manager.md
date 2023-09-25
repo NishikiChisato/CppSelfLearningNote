@@ -14,6 +14,7 @@
     - [Common Table Expression(CTE)](#common-table-expressioncte)
     - [Recursive CTE](#recursive-cte)
   - [Database Storage](#database-storage)
+    - [OS vs. Buffer Pool Manager](#os-vs-buffer-pool-manager)
     - [File Storage](#file-storage)
       - [Heap File Organization](#heap-file-organization)
     - [Page Layout](#page-layout)
@@ -125,6 +126,28 @@ The execution order of a recursive CTE is as follows:
 * Third, combine all result sets R0, R1, … Rn using UNION ALL operator to produce the final result set.
 
 ## Database Storage
+
+### OS vs. Buffer Pool Manager
+
+> GPT answer
+
+* Problem #1: Transaction Safety
+
+When using memory-mapped I/O, the operating system can flush dirty pages at any time, which can cause problems for transactional consistency. If a transaction modifies a page in memory and the OS flushes that page to disk before the transaction commits, the database can become inconsistent. To address this problem, the database system must use techniques such as write-ahead logging to ensure that all changes to the database are recorded before they are flushed to disk.
+
+* Problem #2: I/O Stalls
+
+When using memory-mapped I/O, the database system doesn't know which pages are in memory and which are not. If a thread tries to access a page that is not in memory, the OS will stall the thread while it reads the page from disk. This can cause significant performance problems, especially if many threads are accessing the database concurrently.
+
+* Problem #3: Error Handling
+
+When using memory-mapped I/O, it can be difficult to validate pages and handle errors. Any access to a page that is not in memory can cause a SIGBUS signal, which the database system must handle. This can be challenging, especially if the database system is running in a multi-threaded environment.
+
+* Problem #4: Performance Issues
+
+When using memory-mapped I/O, the database system can experience performance issues due to OS data structure contention and TLB shootdowns. OS data structures such as the page table can become a bottleneck if many threads are accessing the database concurrently. Additionally, TLB shootdowns can occur when the OS needs to invalidate TLB entries for a page that has been modified, which can cause significant performance overhead.
+
+To address these problems, some database systems use alternative I/O mechanisms such as direct I/O or asynchronous I/O. These mechanisms can provide better control over I/O operations and reduce the impact of OS-level issues on database performance and consistency.
 
 ### File Storage
 

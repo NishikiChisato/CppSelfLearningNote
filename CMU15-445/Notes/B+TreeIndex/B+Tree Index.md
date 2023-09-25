@@ -4,6 +4,7 @@
   - [Storage Models \& Compression](#storage-models--compression)
     - [Database Workload](#database-workload)
     - [Database Storage Models](#database-storage-models)
+    - [Tuple Extract](#tuple-extract)
     - [Compression](#compression)
       - [Run-Length Compression](#run-length-compression)
       - [Bit-Packing Compression](#bit-packing-compression)
@@ -23,6 +24,15 @@
       - [Laest Recently Used](#laest-recently-used)
       - [Clock](#clock)
       - [LRU-K](#lru-k)
+  - [Hash Tables](#hash-tables)
+    - [Static Hash Scheme](#static-hash-scheme)
+      - [Linear Probe Hashing](#linear-probe-hashing)
+      - [Robin Hood Hashing](#robin-hood-hashing)
+      - [Cuckoo Hashing](#cuckoo-hashing)
+    - [Dynamic Hashing Scheme](#dynamic-hashing-scheme)
+      - [Chained Hashing](#chained-hashing)
+      - [Extendible Hashing](#extendible-hashing)
+      - [Linear Hashing](#linear-hashing)
 
 ## Storage Models & Compression
 
@@ -56,6 +66,16 @@ So in this scenario, DBMS must use DSM to store tuple.
 Therefore, we can extract some useful attribute of the tuple instead read all attribute of the tuple.
 
 ![DSM3](./img/DSM3.png)
+
+### Tuple Extract
+
+In cloumn storage, how can we extract a tuple from table. We have two approachs to handle it:
+
+![TupleExtract](./img/TupleExtract.png)
+
+First, we can simply use offset to extract tuple. We can store same tuples' attributes in same offset. When we want to extract specific tuple, we can simply use offset to extract it.
+
+Second, we can additional store tuple id to tuple attribute in cloumn. When extract one tuple, we can scan each column and match specific tuple id.
 
 ### Compression
 
@@ -225,4 +245,118 @@ The porblem of this two approachs is that, the cacahe would susceptible for *seq
 
 The varient of LRU policy, called LRU-K, can handle this situation. LRU-K would track the number of access time is greater and equal than K, for those access times less than K, they would be evicted firstly.
 
+---
+
+## Hash Tables
+
+Hash table implement an unordered associative array that maps keys to value. It used hash function to compute an offset into this array for a given key.
+
+Space complexity: $O(n)$
+
+time complexity: 
+* Average: $O(1)$
+* Worse: $O(n)$
+
+Designing a hash table requires consider two factor: 
+
+* Hash Function: how to map a large key space to smaller value domain
+* Hashing Scheme: how to handle collision after Hashing
+
+The basic design of hash table is as shown in the following figure:
+
+![StaticHash](./img/StaticHash.png)
+
+
+### Static Hash Scheme
+
+#### Linear Probe Hashing
+
+![Hashing1](./img/Hashing1.png)
+
+It uses a circular buffer of array slots and hash function maps keys to slot. For insert, firstly hashing a given key to a slot, if the slot is free, then the key-value pair is insertted into it; otherwise, adjacent slot are searched until a free slot is found. For lookup, firstly hashing a given key to slot, and linear search adjacent slot, if encounters an free slot, it means this value is not present in hash table.
+
+The question of this approach is when search encounters a null slot which is deleted previously, it would not find the specific value that is mapped to the given key.
+
+![Hashing2](./img/Hashing2.png)
+
+Two solutions is shownd as the following figure:
+
+![Hashing3](./img/Hashing3.png)
+
+This approach would result in expensive cost, so it's not common used.
+
+![Hashing4](./img/Hashing4.png)
+
+![Hashing5](./img/Hashing5.png)
+
+![Hashing6](./img/Hashing6.png)
+
+If the key is not unique, there are two approachs to handle it: 
+
+![Hashing7](./img/Hashing7.png)
+
+#### Robin Hood Hashing
+
+This is varient of Linear Probe Hashing, it records the distence between current position and optimal position. Everytime we insert a key-value into it, it seeks to reduce the distence of each key from their optimal position.
+
+![RobinHash](./img/RobinHash1.png)
+
+![RobinHash](./img/RobinHash2.png)
+
+![RobinHash](./img/RobinHash3.png)
+
+![RobinHash](./img/RobinHash4.png)
+
+![RobinHash](./img/RobinHash5.png)
+
+#### Cuckoo Hashing
+
+This approach maintain multiple hash table with different hash function. When we insert, it check computes hash function to check every table for finding a free slot. If no table has a free slot, it would randomly chose old enrty to evict and rehash the old entry. In the rare cases, we may trap into dead loop, we can rebuild the hash table by using larger table.
+
+### Dynamic Hashing Scheme
+
+#### Chained Hashing
+
+We can maintain a list of bucket for each slot in hash table. The concept of bucket is a container that can store one or more key-value pair.
+
+When the bucket is full, we can allocate a new bucket to store new key-value pair, and add it into the tail of the slot of corresponding key.
+
+![ChainHash](./img/ChainHash1.png)
+
+![ChainHash](./img/ChainHash2.png)
+
+![ChainHash](./img/ChainHash3.png)
+
+If the new bucket is full again, this operation would perform over and over again. Obviously, if buckets gorw infinitely, this approach would degenrate into link list.
+
+#### Extendible Hashing
+
+Because of the result of hash function is an interge number, so in *bucket Pointers*, we can chose specific bits to map to one or more buckets. If the bucket is full and can not insert a new key-value pair, we can double the *bucket pointer* and reshuffle the content of all buckets.
+
+In order to implement the map of *bucket pointer* and *bucket*, we set *global bit* and *local bit*. The former is used to detemine which slots in *bucket pointe* correspond to which *bucket*, as the shown of the following figure: 
+
+![ExtendibleHash](./img/ExtendibleHash1.png)
+
+![ExtendibleHash](./img/ExtendibleHash2.png)
+
+![ExtendibleHash](./img/ExtendibleHash3.png)
+
+At this time, the bucket is full, so we need to double the *bucket pointer*. Then rehash the content of the all buckets
+
+![ExtendibleHash](./img/ExtendibleHash4.png)
+
+![ExtendibleHash](./img/ExtendibleHash5.png)
+
+![ExtendibleHash](./img/ExtendibleHash6.png)
+
+
+#### Linear Hashing
+
+Instead of imediately double bucket pointer, Linear Hashing would increase bucket pointer gradually. At some time, if bucket is full, it would add a new bucket into the tail of the corresponding key slot and **add a new *bucket pointer***. It would generate a new hash function and *split pointer* would downword. The new *bucket pointer* is the duplication of the old *bucket pointer*, so they would use different hash function.
+
+![LinearHash](./img/LinearHash1.png)
+
+As the above figure shows, when we add $17$ into hash table, the bucket which `slot 1` maps is full, and the *split pointer* points to `slot 0`. So we would add a new bucket into `slot 1` and add a new *bucket pointer*. The old bucket use `hash function 1`, the new bucket use `hash function 2`
+
+![LinearHash](./img/LinearHash2.png)
 
