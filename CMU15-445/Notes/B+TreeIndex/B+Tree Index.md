@@ -33,6 +33,9 @@
       - [Chained Hashing](#chained-hashing)
       - [Extendible Hashing](#extendible-hashing)
       - [Linear Hashing](#linear-hashing)
+  - [Index](#index)
+    - [Clustering index \& Non-clustering index](#clustering-index--non-clustering-index)
+    - [Dense index \& Sparse index](#dense-index--sparse-index)
 
 ## Storage Models & Compression
 
@@ -359,4 +362,24 @@ Instead of imediately double bucket pointer, Linear Hashing would increase bucke
 As the above figure shows, when we add $17$ into hash table, the bucket which `slot 1` maps is full, and the *split pointer* points to `slot 0`. So we would add a new bucket into `slot 1` and add a new *bucket pointer*. The old bucket use `hash function 1`, the new bucket use `hash function 2`
 
 ![LinearHash](./img/LinearHash2.png)
+
+---
+
+## Index
+
+In order to gain faster random access, we can use an index structure. An *ordered index* stores the value of *search key* in sorted order and associates the record which search key corresponding to. Besides, index would store seperatedly in another file.
+
+### Clustering index & Non-clustering index
+
+Clustering index would **change the physical order** and when I create it, the contain of this relation would be sorted in specific cloumn. Clustering index can create only one.
+
+Non-clustering index would not **change the order of original relation**. It is created one or more cloumn to enhance the retrieval speed of specific queries.
+
+### Dense index & Sparse index
+
+Dense index would creates index entries for **every search key value**, sparse key would creates index entries for **some of the search key value**, the details of them as the following figure shows:
+
+![DenseIndex](./img/DenseIndex.png)
+
+![SparseIndex](./img/SparseIndex.png)
 

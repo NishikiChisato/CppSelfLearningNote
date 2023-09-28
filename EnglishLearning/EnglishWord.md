@@ -238,3 +238,5 @@ typically - 通常
 so forth - 以此类推
 
 intitutively - 直觉上来说
+
+likewise - 同样的
