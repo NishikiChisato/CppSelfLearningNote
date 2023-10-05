@@ -18,3 +18,8 @@
 >
 > 当 $n$ 为偶数时，$\lceil (n - 1) / 2 \rceil = \lfloor n/2\rfloor$
 
+`B_PLUS_INTERNAL_PAGE_TYPE` 只能用于遍历内部节点，当到达叶节点时，需要将其转换成 `B_PLUS_LEAF_PAGE_TYPE`
+
+二者均是存储在 `page` 的 `4KB` 的页面中，但是二者 `matadata` 所占大小不同：`internal page` 只有 `12 byte`，而 `leaf page` 有 `16 byte`
+
+也就是说如果用 `B_PLUS_INTERNAL_PAGE_TYPE` 去考虑叶节点的话，我们无法得到正确的 `array_` 数组的值（**会发生偏移**）
