@@ -100,3 +100,6 @@
 
 ![Split_Parent](./img/Split_Parent.png)
 
+---
+
+对于B+树的内部节点，如果是找 `second` 的话，那么不能用二分查找
