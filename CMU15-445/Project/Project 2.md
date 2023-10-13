@@ -1,16 +1,26 @@
 # Project 2
 
 - [Project 2](#project-2)
-  - [Basic Concepts](#basic-concepts)
+  - [Checkpoint 1](#checkpoint-1)
     - [Flexible layout](#flexible-layout)
     - [Page Layout](#page-layout)
     - [Binary Search](#binary-search)
   - [Insert](#insert)
     - [Split Leaf](#split-leaf)
     - [Split Internal](#split-internal)
+  - [Checkpoint 2](#checkpoint-2)
+    - [Delete](#delete)
+      - [Determine nearby node](#determine-nearby-node)
+      - [Coalesce](#coalesce)
+      - [Redistribution](#redistribution)
+    - [Iterator](#iterator)
+    - [Concurrency](#concurrency)
+      - [Crabbing lock](#crabbing-lock)
+      - [Data race](#data-race)
+      - [Deadlock](#deadlock)
 
 
-## Basic Concepts
+## Checkpoint 1 
 
 ### Flexible layout
 
@@ -64,6 +74,18 @@
 
 对于 `upper_bound` 而言，区间被划分为：$[1,2,3,4,5]$ 和 $[6,7,8,9,10]$，后半区间的起点为 $6$
 
+`std::lower_bound` 和 `std::upper_bound` 都可以传入一个 `predicate` 来自定义比较方式，该 `predicate` 的要求为（两个函数都一样）：只要第一个参数**小于**第二个参数，那么返回 `true`
+
+例如，我们可以这样写（该函数返回 `-1` 表示第一个参数小于第二个参数）：
+
+```cpp
+int idx = std::lower_bound(cur_page->array_, cur_page->array_ + cur_page->size_, std::make_pair(key, ValueType()),
+                            [&](const MappingType &e1, const MappingType &e2) {
+                              return this->comparator_(e1.first, e2.first) == -1;
+                            }) -
+          cur_page->array_;
+```
+
 ## Insert
 
 `insert` 函数的大致思路在书中有伪代码给出，在此我们只关注几个重要的点：
@@ -103,3 +125,104 @@
 ---
 
 对于B+树的内部节点，如果是找 `second` 的话，那么不能用二分查找
+
+## Checkpoint 2
+
+### Delete
+
+`B+Tree` 的 `delete` 操作在当前节点不满足 $\lceil n/2\rceil$ 时（也就是 $(n+1)/2$），会发生 `coalesce` 和 `redistribution`，这也是 `B+Tree` 中较为复杂的部分，我们详细讨论这一部分
+
+#### Determine nearby node
+
+无论是 `coalesce` 还是 `redistribution`，我们都需要确定当前节点 $N$ 的相邻节点 $N'$，我们只需要在当前节点 $N$ 的父节点中找到其相邻节点即可。换句话说，$N$ 和 $N'$ 具有相同的父节点
+
+需要注意的是，这里我们只能**逐个遍历**父节点当中的内容，而不能简单地使用二分查找。这是因为我们是在父节点中查找当前节点 $N$ 的 `page id`，而在父节点中，`key` 是有序的，而 `page id` 是无序的，因此我们只能逐个遍历
+
+另外，为了保证与官方提供的 [`bpt-printer`](https://15445.courses.cs.cmu.edu/spring2023/bpt-printer/) 相一致，我们优先选择**后一个节点**。换句话说，只有当前节点是最后一个节点的时候，我们才会选择前一个节点，否则都是选择后一个节点。书中的伪代码是优先选择前一个节点，这样做没有问题，但会与官方提供的 `bpt-printer` 所产生的结果不一致
+
+> 在后面的描述中，我会描述我的实现方法。我是按照官方的 `bpt-printer` 的行为进行设计的，虽然与书中的描述不同，但有可视化的结果进行参考
+
+除了确定相邻节点 $N'$ 以外，我们还需要确定 $N$ 与 $N'$ 之间的那个 `key`，具体如下图：
+
+![nearby_node](./img/nearby_node.png)
+
+#### Coalesce
+
+如果当前节点 $N$ 和相邻节点 $N'$ 当中的元素个数**小于等于**单个节点的最大大小，那么我们便执行 `coalesce`
+
+* 对于 `leaf page`，要求小于等于 `leaf_max_size_ - 1`
+* 对于 `internal page`，要求小于等于 `internal_max_size_`
+
+对于 `leaf page` 而言，我们只需要将 $N$ 中的所有元素加到 $N'$ 中即可（或者反过来），然后对应设置以下 `next_page_id_` 即可
+
+对于 `internal page` 而言，我们需要将 **`key`** 以及 $N'$ 中的所有元素全部加到 $N$ 中（或者将 $N$ 中的所有元素加到 $N'$ 中）。对于内部节点，由于第一个 `key` 为空，因此我们需要将父节点的 `key` 加入到新合并得到的节点当中，随后再在父节点中删除 `key` 和 $N$（或者 $N'$）
+
+在父节点中，我们是以 `key` 为单位进行删除的，而 `key` 又与其对于的 `page id` 组成了一个整体。为了方便，无论当前节点与相邻节点的位置关系如何，我们**始终删除后一个节点**，具体如下图：
+
+![coalesce_internal](./img/coalesce_internal.png)
+
+对于 `leaf page` 而言，只是少了将**父节点的 `key` 加入到新合并得到的节点中**这一操作，移动的方向以及删除的节点二者是一样的
+
+#### Redistribution
+
+如果 $N$ 与 $N'$ 的元素个数**大于**单个节点的最大大小，那么我们需要执行 `redistribution`。该操作的本质是**向相邻节点借一个元素过来**
+
+对于 `leaf page` 而言，我们需要考虑二者的位置关系：
+
+* 如果 $N$ 在 $N'$ 的前面，那么我们将 $N'$ 的第一个元素加到 $N$ 的后面，将 $N'$ 中的所有元素向前移动一位，并将**原先父节点当中的 `key` 设置为 $N'$ 的第一个 `key`**
+* 如果 $N$ 在 $N'$ 的后面，那么我们将 $N$ 中的所有元素向后移动一位，将 $N'$ 的最后一个元素加到 $N$ 中，并将**原先父节点当中的 `key` 设置为 $N$ 的第一个 `key`**
+
+![redistribute_leaf](./img/redistribute_leaf.png)
+
+对于 `internal page` 而言，我们同样需要考虑二者的位置关系：
+
+* 如果 $N$ 在 $N'$ 的前面，我们需要将**父节点当中的 `key` 以及 $N'$ 第一个元素当中的 `second` 加到 $N$ 的后面**，然后将**父节点当中的 `key` 替换为 $N'$ 第一个元素当中的 `first`**，最后将 $N'$ 的所有元素向前移动一位
+* 如果 $N$ 在 $N'$ 的后面，我们需要将 $N$ 先向后移动一位，然后将**父节点的 `key` 以及 $N'$ 的最后一个元素的 `second` 加到 $N$ 的前面**，然后**用 $N'$ 的最后一个元素的 `first` 替换掉父节点的 `key`**
+
+![redistribute_internal](./img/redistribute_internal.png)
+
+### Iterator
+
+对于 `iterator` 的设计，由于该迭代器是只读的，并且我们需要保证在并发的时候不会发生 `data race`，因此我们需要一个 `ReadPageGuard`；另外，我们还需要获取当前 `page` 的下一个 `page`，因此我们需要一个 `bpm` 指针来获取；最后，由于我们需要确定当前 `leaf page` 中的元素的位置，因此需要一个 `const Mapping*` 的指针
+
+实际上有这三个就以及足够了，我的设计当中加入了一个指向当前 `leaf page` 尾部的指针，用于快速确定当前迭代器是否已经遍历到头了
+
+我的定义如下：
+
+```cpp
+ReadPageGuard read_guard_;
+const MappingType *ptr_;
+const MappingType *end_;
+page_id_t cur_page_id_;
+BufferPoolManager *bpm_;
+```
+
+### Concurrency
+
+#### Crabbing lock
+
+并发控制是这个实验最难的一个部分了，我们需要去实现 `crabbing lock`，这里需要用到 `Context` 这个工具
+
+`crabbing lock` 的本质是：对于当前节点而言，如果我们能够确定它的**子节点**是 `safe` 的，那么我们便可以释放**当前节点**的所有祖宗 `ancestors`（**不包括当前节点**）。而一个节点是 `safe` 的当且仅当它不会执行 `split, coalesce, redistribution` 这些操作。换句话说，对于 `insert` 操作而言，子节点的元素个数加一**小于** $n-1$，对于 `delete` 操作而言，子节点的元素个数减一**大于等于** $\lceil n/2\rceil$
+
+因此，我们在向下递归到叶节点时便可以对当前节点的子节点进行判断，进而确定是否需要释放之前的节点
+
+实际上，如果我们确定了当且节点的子节点是安全的，那么**相当于无论子节点发生什么操作，都不会影响到当前节点的之上的节点**。我们不释放当前节点的原因在于，子节点的操作会传递到当前节点，也就是我们需要对当前节点进行修改，因此我们**不能释放当前节点**
+
+对于多线程当中的 `data race` 和 `deadlock`，在此写下一点我的经验
+
+#### Data race
+
+> 需要说明的是，`Race` 和 `Contention` 是两个不同的概念：
+> 
+> * `Contention` 是指线程 $A$ 以及访问了线程 $B$ 而 $B$ 需要等待 $A$ 将该资源释放
+> * `Race` 是指 $A$ 和 $B$ 都想要访问该资源，最快的那个将抢先访问，而慢的那个则只能等待。因此这会导致 `Contention`
+>
+> 相关链接：[Thread - contention vs race](https://cs.stackexchange.com/questions/126013/thread-contention-vs-race)
+
+对于这种情况，我们可以在全部线程完成插入、删除、查询等操作后，逐一检查 `B+Tree` 当中的数据是否是正确的。换句话说，我们直接对所有的 `leaf page` 进行一次遍历，便可以确定当前存在的元素是否符合预期
+
+#### Deadlock
+
+如果判断产生 `deadlock`，我们直接进入 `cgdb` ，跳转到 `join` 的前一条语句当中。这时所有的线程一定都创建完毕并且开始执行。由于多线程的执行具有随机性，因此我们实际上是无法单步执行某个线程的。因此，我们可以故意让 `deadlock` 发生，然后跳转到对应的线程，通过 `backtrace` 来查看栈帧，并通过 `frame` 指令来跳转到对应的栈帧中，然后再对数据进行检查，进而明确 `deadlock` 发生的原因
+
