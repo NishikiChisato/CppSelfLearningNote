@@ -15,7 +15,9 @@
       - [Redistribution](#redistribution)
     - [Iterator](#iterator)
     - [Concurrency](#concurrency)
-      - [Crabbing lock](#crabbing-lock)
+      - [Crabbing lock (Pessimistic version)](#crabbing-lock-pessimistic-version)
+      - [Optimistical lock](#optimistical-lock)
+      - [Root issue](#root-issue)
       - [Data race](#data-race)
       - [Deadlock](#deadlock)
 
@@ -199,13 +201,21 @@ BufferPoolManager *bpm_;
 
 ### Concurrency
 
-#### Crabbing lock
+#### Crabbing lock (Pessimistic version)
 
 并发控制是这个实验最难的一个部分了，我们需要去实现 `crabbing lock`，这里需要用到 `Context` 这个工具
 
 `crabbing lock` 的本质是：对于当前节点而言，如果我们能够确定它的**子节点**是 `safe` 的，那么我们便可以释放**当前节点**的所有祖宗 `ancestors`（**不包括当前节点**）。而一个节点是 `safe` 的当且仅当它不会执行 `split, coalesce, redistribution` 这些操作。换句话说，对于 `insert` 操作而言，子节点的元素个数加一**小于** $n-1$，对于 `delete` 操作而言，子节点的元素个数减一**大于等于** $\lceil n/2\rceil$
 
 因此，我们在向下递归到叶节点时便可以对当前节点的子节点进行判断，进而确定是否需要释放之前的节点
+
+#### Optimistical lock
+
+我们乐观地认为，每次的插入以及删除操作只会更新 `leaf page`（不会产生 `split, coalesce, redistribution`），因此我们从根节点开始遍历时，可以获取 `Reader lock`，**到达 `leaf page` 时获取 `Writer lock`**。如果此次操作会导致 `leaf page` 发生改变（也就是上述的三种操作），那么我们回退到 `Pessimistic` 的方案
+
+与 `Pessimistic` 不同的地方在于，前者会一直使用 `writer lock`，然后判断是否需要释放之前的 `lock`；后者会尝试先使用 `Reader lock`，如果不行则回退
+
+#### Root issue
 
 实际上，如果我们确定了当且节点的子节点是安全的，那么**相当于无论子节点发生什么操作，都不会影响到当前节点的之上的节点**。我们不释放当前节点的原因在于，子节点的操作会传递到当前节点，也就是我们需要对当前节点进行修改，因此我们**不能释放当前节点**
 
