@@ -209,6 +209,35 @@ BufferPoolManager *bpm_;
 
 实际上，如果我们确定了当且节点的子节点是安全的，那么**相当于无论子节点发生什么操作，都不会影响到当前节点的之上的节点**。我们不释放当前节点的原因在于，子节点的操作会传递到当前节点，也就是我们需要对当前节点进行修改，因此我们**不能释放当前节点**
 
+由于我们是对 `page` 进行上锁，因此如果前面的 `thread` 持有该节点的 `lock`，那么后续的 `thread` 会卡在该节点。实际上，我们需要细化这个过程，不然会出现很多问题。后续的 `thread` 会先从 `bpm` 中获取到该 `page`，然后在试图对该 `page` 上锁时被卡住。也就是说**后续节点是获得了当前的页面，只是无法对当前页面进行写入而已**
+
+我们考虑这样一种情况，有两个线程都执行插入操作，$A$ 线程在插入时，$B$ 会被卡在根节点（此时它已经获得了根节点的 `page` 内容，只不过无法写入），如果 $A$ 的插入导致 `B+Tree` 的根节点发生了变化，那么此时根节点的位置便发生了改变，而 $B$ 目前所被卡住的位置并不是新的根节点，因此这会产生问题。
+
+> 顺带一提，这种情况只会在插入的时候产生错误，在删除时不会。因为哪怕根节点被删除，$B$ 线程已经持有了原先的根节点，因此它不会被 `bpm` 从内存当中清空出去。并且 $B$ 也可以顺利地从原先根节点的内容找到正确的路径
+
+关于这个问题，我的解决办法是，先将原先根节点的 `page id` 保存下来，然后 `fetch` 一次，随后将原先的 `page id` 与根节点当前的的 `page id` 进行比较，如果不同则再次 `fetch` 一次，即：
+
+```cpp
+page_id_t old_root_id = this->header_page_id_;
+auto root_guard = this->bpm_->FetchPageWrite(old_root_id);
+if (old_root_id != this->header_page_id_) {
+  root_guard = this->bpm_->FetchPageWrite(this->header_page_id_);
+}
+```
+
+但这个代码会产生问题。我们注意看 `root_guard = this->bpm_->FetchPageWrite(this->header_page_id_)` 这行代码，会执行这行代码说明根节点发生了改变。当前的 `root_guard` 已经持有了旧的根节点的 `lock`，然后它试图获取新的根节点。在执行完 `if` 判断时，如果该线程在将要执行这条语句时被中断，如果其他的线程所执行的操作导致新的根节点被删去，也就是现在整棵树的根节点与最开始的根节点变成同一个（这种情况是可能的，因为新的根节点此时还没有被 `lock`），那么当当前线程执行时，它会对同一个 `page id` 执行两次 `lock`，这会导致错误（在执行 `WriteGuard` 的移动赋值语句时，会先执行 `FetchPageWrite`）
+
+因此我将上述代码修改为：
+
+```cpp
+page_id_t old_root_id = this->header_page_id_;
+auto root_guard = this->bpm_->FetchPageWrite(old_root_id);
+if (old_root_id != this->header_page_id_) {
+  root_guard.Drop();
+  root_guard = this->bpm_->FetchPageWrite(this->header_page_id_);
+}
+```
+
 对于多线程当中的 `data race` 和 `deadlock`，在此写下一点我的经验
 
 #### Data race
