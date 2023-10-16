@@ -14,6 +14,21 @@
       - [Multi-index Scan](#multi-index-scan)
     - [Modification Query](#modification-query)
     - [Expression Evaluation](#expression-evaluation)
+  - [Query Execution II](#query-execution-ii)
+    - [Process Model](#process-model)
+      - [Process per Worker](#process-per-worker)
+      - [Thread per Worker](#thread-per-worker)
+      - [Embedded](#embedded)
+      - [Schedule](#schedule)
+    - [Inter-Query Parallelism](#inter-query-parallelism)
+    - [Intra-Query Parallelism](#intra-query-parallelism)
+      - [Intra-Operator (Horizonal)](#intra-operator-horizonal)
+      - [Inter-Operator (Vertical)](#inter-operator-vertical)
+      - [Bushy](#bushy)
+    - [I/O Parallelism](#io-parallelism)
+      - [RAID](#raid)
+      - [DBMS Partitioning](#dbms-partitioning)
+      - [Table Partitioning](#table-partitioning)
 
 
 ## Query Execution I
@@ -162,4 +177,169 @@ DBMS 将 `SQL statement` 转换为 `query plan`，`query plan` 中的 `operator`
 考虑一个等号节点 $N$，如果我们采取遍历树的形式看待，那么我们每次计算 $N$ 时都需要将它的所有子节点都遍历一次。但实际上，我们可以将该节点编译为一个函数，然后每次需要遍历该节点的时候我们都去调用对应的函数，这会很大地提高效率（这么做的前提是，有一个子节点是常数）
 
 在上面这个例子中，我们原本需要**递归遍历**三个节点（一共有三次函数调用），引入优化后我们只需要调用一次函数调用即可完成整个运算
+
+---
+
+## Query Execution II
+
+我们可以并发执行数据库中的查询语句，这将可以带来更高的吞吐量（单位时间内执行语句的个数）以及降低查询语句的执行延时（单条语句的执行时间）
+
+并行 `parallel` 和分布 `distributed` 的相同点为：
+
+* 通过分散数据库 `database` 的资源 `resource` 来提升 `DBMS` 的执行效率
+* 无论物理上是如何组织的，对于应用程序而言都**只有一个逻辑上的数据库**。换句话说，对于单个资源，无论是以并行组织的还是以分布组织的，`DBMS` 都需要返回相同的结果
+
+> 注：这里的资源 `resource` 是指 `CPU cores, CPU sockets, GPU, disk` 等硬件上的资源
+
+![ParallelAndDistributed](./img/ParallelAndDistributed.png)
+
+对于 `Parallel` 类型的 `DBMS` 而言：
+
+* 资源 `resource` 在物理上向邻近
+* 资源之间的交互速度十分快速
+* 不同资源之间的通信可以认为是廉价的 `cheap` 和可靠的 `reliable`
+
+对于 `Distributed` 类型的 `DBMS` 而言：
+
+* 资源 `resource` 在物理上的距离可能十分遥远
+* 资源之间的交互十分的缓慢
+* 会有不同资源之间的交流开销以及信息的传递可能会失败
+
+### Process Model
+
+`Process Model` 定义了 `DBMS` 该**如何执行多个用户程序的并发请求**；`worker` 是 `DBMS` 中的一个组件，用于实际去执行任务 `task` 并返回结果
+
+![ProcessModel](./img/ProcessModel.png)
+
+`Process Model` 主要有三个，分别是：
+
+* Process per DBMS Worker
+* Thread per DBMS Worker
+* Embedded DBMS
+
+#### Process per Worker
+
+![ProcessPerWorker](./img/ProcessPerWorker.png)
+
+应用程序首先与调度者 `dispatcher` 进行通信，然后 `dispatcher` 会选择一个 `worker process`，之后由该 `worker process` 执行对应的操作并返回结果。这里的 `worker process` 实际上是一个操作系统中的进程，因此这取决于操作系统的调用。对于全局的数据它们会使用共享内存进行访问，并且一个进程崩溃不会导致整个系统的崩溃
+
+#### Thread per Worker
+
+相比于 `Process per Worker`，这么做的好处在于：
+
+* 资源利用率更高：因为多线程实际上是在单个进程中共享内存的，因此它们可以很轻易地去共享数据以及相互通信；而不同的进程间的地址空间是独立的，因此需要单独分配一块空间来进行通信
+* 上下文切换更快：线程在这方面的速度比进程更快，需要设置和保存的状态更少
+
+![ThreadPerWorker](./img/ThreadPerWorker.png)
+
+#### Embedded
+
+![Embedded](./img/Embedded.png)
+
+这种方式将 `DBMS` 嵌入到应用程序中，因此应用程序在 `database` 上自己建立线程去执行对应的任务，应用程序本身也可以对线程进行调度
+
+#### Schedule
+
+`DBMS` 的查询计划 `query plan` 需要包含以下内容
+
+![Schedule](./img/Schedule.png)
+
+### Inter-Query Parallelism
+
+查询间并行 `Inter-Query Parallelism`，可以同时执行多个不同的查询，这可以增加吞吐量 `throughput` 和降低查询延迟 `latency`
+
+如果所有的查询都是 `read-only` 的，那么这十分的容易，因为这不会修改 `database` 的状态。但如果多个线程会同时更新 `database` 的数据，这便会造成问题。我们将在 `Concurrency Control` 中讨论这个问题
+
+### Intra-Query Parallelism
+
+查询内并行 `Intra-Query Parallelism`，可以使单个查询内的多个算子 `operator` 同时执行，这可以提高单个查询的速度。我们可以将单个查询内的所有算子看成一个 `producer & consumer` 模型，对于一个算子而言，底层的提供数据，上层的提取数据，这种思想类似于流水线 `pipeline`
+
+对于每个算子 `operator`，都有一个对应的并行版本，其实现思路有两种：
+
+* 所有的线程共同去操作同一个共享数据
+* 将数据分块，然后各个块由单独的线程操作
+
+![Intra-QueryParallelism](./img/Intra-QueryParallelism.png)
+
+考虑一个 `grace hash join` 的例子，我们将两个 `table` 执行完 `hash` 过后，对于 `hash table` 当中的每一行而言，我们都可以使用一个 `worker` 来并行地对该行进行操作，最后我们将结果聚集起来便可
+
+![ParallelGraceHashJoin](./img/ParallelGraceHashJoin.png)
+
+我们可以通过并行执行多个 `operators` 来实现 `Intra-Query`，分为水平方向 `horizonal` 和垂直方向 `vertical`
+
+* Approach #1: Intra-Operator (Horizonal)
+* Approach #2: Inter-Operator (Vertical)
+
+#### Intra-Operator (Horizonal)
+
+我们可以将 `operators` 划分为多个独立的 `fragments`，这些 `fragments` 用于对数据的子集执行同一个函数；之后，通过 `exchange operator` 来将这些结果合并 `coalesce` 或者分裂 `split`
+
+![Horizonal](./img/Horizonal.png)
+
+对于当前 `operator` 而言，我们可以创建多个线程，使每个线程只对所有数据的一部分进行操作，之后我们再通过 `exchange operator` 将结果进行 `coalesce`
+
+![HorizonalSample](./img/HorizonalSample.png)
+
+`Exchange operator` 的类型如下：
+
+* Gather: multiple input and single output
+* Distribute: Single input and multiple output
+* Repartition: Multiple input and multiple output
+
+![ExchangeOperator](./img/ExchangeOperator.png)
+
+下面这个例子很好地说明了 `exchange` 的作用。在对 $A$ 建立完 `hash table` 后，我们将得到的三个 `hash table` 合并成一个；然后 $B$ 在用自己得到的结果在这个合并后的 `hash table` 中进行 `probe`；之后我们会得到三个不同的集合，最后再用 `exchange operator` 聚合成一个并将其输出
+
+![ExchangeSample](./img/ExchangeSample.png)
+
+#### Inter-Operator (Vertical)
+
+我们可以将每个 `operator` 都用一个 `thread` 或者 `worker` 进行控制，那么我们便可以同时执行多个 `operator`，这与 `pipeline` 思想十分相近
+
+![Vertical](./img/Vertical.png)
+
+可以参考下图，多个 `operators` 之间可以并发地执行，然后数据在它们之间不断流动
+
+![VerticalSample](./img/VerticalSample.png)
+
+#### Bushy
+
+这是 `Intra-Operator` 和 `Inter-Operator` 的融合。实际上，`Intra-Operator` 的意思是算子内并行，`Inter-Operator` 的意思是算子间并行，这也就分别对应水平方向和垂直方向
+
+![Bushy](./img/Bushy.png)
+
+### I/O Parallelism
+
+我们到目前为止讨论的并行性都是基于 `CPU` 的，但如果我们的瓶颈 `bottleneck` 处在磁盘的读写上，那么我们哪怕加入更大的 `CPU` 并行也不会使得效率得到更大的提升。因此，我们真正需要的是 `I/O Parallelism`：
+
+![IOParallelism](./img/IOParallelism.png)
+
+我们可以将 `DBMS` 划分为多个存储设备，这样子我们可以同时对多个设备进行读取，可以提升磁盘带宽 `disk bandwidth`。实现的方法有很多：
+
+* Multiple Disks per Database
+* One Database per Disk
+* One Relation per Disk
+* Split Relation across Multiple Disks
+
+但无论我们使用那种方式，存储设备都需要保证对 `DBMS` 是透明的 `transparent`
+
+#### RAID
+
+我们可以使用不同等级的 `RAID` 来实现 `I/O` 并行：
+
+![MultiDiskParallelism](./img/MultiDiskParallelism.png)
+
+#### DBMS Partitioning
+
+我们可以将数据库文件 `database` 划分为不同的分区，然后存储在磁盘当中的不同位置。唯一需要注意的是我们需要共享 `recorvery log` 以便保证数据的完整性 `integrity`
+
+![DBMSPartition](./img/DBMSPartition.png)
+
+#### Table Partitioning
+
+我们可以将单个 `table` 进行分块，存储在磁盘的不同位置，这同样可以提升 `I/O` 的并行性。与上面不同的是，上面是将整个 `database` 文件进行分块，这个是将单个 `table` 进行分块，二者操作的对象不同
+
+![Partitioning](./img/Partitioning.png)
+
+---
 
