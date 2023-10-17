@@ -29,6 +29,20 @@
       - [RAID](#raid)
       - [DBMS Partitioning](#dbms-partitioning)
       - [Table Partitioning](#table-partitioning)
+  - [Query Plan \& Optimization](#query-plan--optimization)
+    - [Architecture](#architecture)
+    - [Heuristic / Rule](#heuristic--rule)
+      - [Heuristic](#heuristic)
+        - [Split Conjunctive Predicates](#split-conjunctive-predicates)
+        - [Predicate Pushdown](#predicate-pushdown)
+        - [Replace Cartesian Product](#replace-cartesian-product)
+        - [Projection Pushdown](#projection-pushdown)
+      - [Nested Sub-query](#nested-sub-query)
+        - [Rewrite Nested Sub-queries](#rewrite-nested-sub-queries)
+        - [Decomposing Query](#decomposing-query)
+        - [Rewrite Expression](#rewrite-expression)
+      - [Summary](#summary)
+      - [Cost-based Search](#cost-based-search)
 
 
 ## Query Execution I
@@ -342,4 +356,158 @@ DBMS 将 `SQL statement` 转换为 `query plan`，`query plan` 中的 `operator`
 ![Partitioning](./img/Partitioning.png)
 
 ---
+
+## Query Plan & Optimization
+
+由于 `SQL` 语句是 `declarative`，也就是 `SQL` 语句只会告诉 `DBMS` 需要什么结果，但没有指定该如何得到这个结果。因此，`DBMS` 需要将 `SQL` 语句翻译为一个可执行的查询计划 `executable query plan`。但对于一个执行计划而言，我们有非常多的方式去执行对应的算子 `operators`，因此我们需要从这些 `plan` 中寻找一个最优的，这便是 `optimizer` 的工作
+
+`Logical plan` 是一个与 `query` 的等价关系代数表达式 `relational algobra expression`，也就是关系代数级别的；`physical plan` 用于定义该如何实际执行每个 `operators`
+
+![LogicalPhysical](./img/LogicalPhysical.png)
+
+### Architecture
+
+`DBMS` 执行一个 `query plan` 的整体架构如下：
+
+![Architecture](./img/Architecture.png)
+
+* `SQL Rewriter` 会将一条 `SQL` 语句重写为不同的格式
+* `Parser` 会将 `SQL` 语句解析并构建一颗抽象语法树 `abstract syntax tree`
+* `Binder` 会先查询 `system catalog`，将 `syntax tree` 中的名称绑定 `bind` 到系统内部的标识符 `internal identifier`
+* `Tree Rewriter` 会在 `logical plan` 中加入更多的 `schema info`
+* `Optimizer` 会在得到的 `logical plan` 中，选择执行效率最高的那个，最后交由执行引擎执行 `physical plan`
+
+`Optimizer` 的实现方式有两种：
+
+* Approach 1#: Heuristic / Rule
+* Approach 2#: Cost-based Search
+
+![QueryOptimization](./img/QueryOptimization.png)
+
+### Heuristic / Rule
+
+基于启发式 `heuristic` 的 `optimizer` 的设计需要注意的点如下：
+
+![HeuristicNotes](./img/HeuristicNotes.png)
+
+我们通过使用一些匹配的 `patten` 来将输入的 `logical plan` 转化成一个等价的 `logical plan`。由于缺少 `cost model`，因此我们不会比较不同的 `logical plan` 之间的性能差异，但我们可以引导往我们希望的方向进行转化。`Heuristic` 的目标是增加在搜索中枚举到最优 `plan` 的可能性
+
+#### Heuristic
+
+`Heuristic` 具体的实现方法有四个：
+
+* Split Conjunctive Predicates
+* Predicate Pushdown
+* Replace Cartesian Products with Joins
+* Projection Pushdown
+
+##### Split Conjunctive Predicates
+
+我们可以将一个完整的、复杂的谓词逻辑 `split` 成多个等价的、简单的谓词逻辑
+
+![BeforeSplit](./img/BeforeSplit.png)
+
+`split` 后结果如下：
+
+![SplitAfter](./img/SplitAfter.png)
+
+##### Predicate Pushdown
+
+我们可以将 `predicate` 下移，这样可以提前过滤掉不需要的数据
+
+![PredicatePushdown](./img/PredicatePushdown.png)
+
+##### Replace Cartesian Product
+
+我们可以将笛卡尔积 `Cartesian Product` 替换为 `join`
+
+![ReplaceCartesianProduct](./img/ReplaceCartesianProduct.png)
+
+原先我们是对两个 `table` 的笛卡尔积的结果进行过滤，我们可以使用 `join` 来替换掉笛卡尔积
+
+##### Projection Pushdown
+
+我们可以在提取 `table` 之前，就将我们不需要的数据过滤掉
+
+![ProjectionPushdown](./img/ProjectionPushdown.png)
+
+#### Nested Sub-query
+
+对于 `nested sub-query` 的优化，主要有三个：
+
+* Rewrite Nested Sub-queries
+* Decomposing Queries
+* Rewrite Expression
+
+##### Rewrite Nested Sub-queries
+
+`DBMS` 会将 `where clause` 中的 `sub-query` 视为函数，需要进行判断时都会执行该函数并对返回结果进行判断
+
+![NestedSub-queries](./img/NestedSub-queries.png)
+
+我们要么将它们重写，以得到两个不相关的查询；要么将 `nested sub-query` 分开，并将其暂时存储在一个 `table` 中
+
+![NestedSubquerySample](./img/NestedSubquerySample.png)
+
+原始查询的含义是，只要 $R$ 中的 `sid` 与 $S$ 中的 `sid` 相同，那么 `where clause` 为 `true`，此时便输出 $S$ 中该 `tuple` 的 `name`
+
+那么实际上这等价于下面的 `SQL` 语句，这样子我们只需要执行一次 `Cartesian Product` 即可，不需要反复执行 `sub-query`
+
+##### Decomposing Query
+
+我们可以将 `sub-query` 与原始 `query` 拆分开，单独计算出这个结果，然后在需要的时候直接赋值即可
+
+![DecomposingQuery](./img/DecomposingQuery.png)
+
+可以参考下面这个例子：
+
+![DecomposingQuerySample](./img/DecomposingQuerySample.png)
+
+这里我们将内部的子查询单独计算出来，然后每次需要的时候直接用该常数进行比较即可
+
+![DecomposingQueryAnswer](./img/DecomposingQueryAnswer.png)
+
+##### Rewrite Expression
+
+我们可以将表达式中的一些冗余的条件进行重新，将其变为更简洁的形式
+
+![ExpressionRewrite](./img/ExpressionRewrite.png)
+
+我们可以看几个例子：
+
+* 对 `predicate` 进行重写
+
+```SQL
+SELECT * FROM A WHERE 1 = 0;
+->
+SELECT * FROM A WHERE false;
+----------------------------
+SELECT * FROM A WHERE NOW() IS NULL;
+->
+SELECT * FROM A WHERE false;
+----------------------------
+```
+
+* 对 `predicate` 进行合并
+
+```SQL
+SELECT * FROM A
+WHERE val BETWEEN 1 AND 100
+OR val BETWEEN 50 AND 150;
+->
+SELECT * FROM A 
+WHERE val BETWEEN 1 AND 150;
+```
+
+#### Summary
+
+实际上，基于启发式 `heuristic` 设计的 `optimizer` 主要是将输入的 `logical plan` 转化成另一个效率更高的 `logical plan`，这个过程中我们会应用上述的一些技巧来进行转化
+
+#### Cost-based Search
+
+基于代价搜索 `Cost-based Search` 设计的 `optimizer` 会利用不同的代价模型 `cost model` 去预测不同的 `logical plan` 之间的开销，然后选择性能最好的那个
+
+![CostBasedSearch](./img/CostBasedSearch.png)
+
+由于我们不可能每次都去执行这些 `logical plan`，因此 `DBMS` 需要一种方式去得到那些信息（也就是该 `logical plan` 的开销如何）
 
