@@ -42,7 +42,23 @@
         - [Decomposing Query](#decomposing-query)
         - [Rewrite Expression](#rewrite-expression)
       - [Summary](#summary)
-      - [Cost-based Search](#cost-based-search)
+    - [Cost-based Search](#cost-based-search)
+      - [Derivable Statistic](#derivable-statistic)
+      - [Selectivity](#selectivity)
+        - [Single Value](#single-value)
+        - [Range Value](#range-value)
+        - [Negation Value](#negation-value)
+        - [Conjunction \& Disjunction](#conjunction--disjunction)
+      - [Estimation for Join](#estimation-for-join)
+      - [Histogram](#histogram)
+        - [Equi-Width Histogram](#equi-width-histogram)
+        - [Equi-Depth Histogram](#equi-depth-histogram)
+      - [Sampling](#sampling)
+      - [Query Optimization](#query-optimization)
+        - [Single-Relation](#single-relation)
+        - [Multi-Relation](#multi-relation)
+        - [Candidate Plan](#candidate-plan)
+      - [Conclusion](#conclusion)
 
 
 ## Query Execution I
@@ -503,11 +519,276 @@ WHERE val BETWEEN 1 AND 150;
 
 实际上，基于启发式 `heuristic` 设计的 `optimizer` 主要是将输入的 `logical plan` 转化成另一个效率更高的 `logical plan`，这个过程中我们会应用上述的一些技巧来进行转化
 
-#### Cost-based Search
+### Cost-based Search
 
 基于代价搜索 `Cost-based Search` 设计的 `optimizer` 会利用不同的代价模型 `cost model` 去预测不同的 `logical plan` 之间的开销，然后选择性能最好的那个
 
 ![CostBasedSearch](./img/CostBasedSearch.png)
 
 由于我们不可能每次都去执行这些 `logical plan`，因此 `DBMS` 需要一种方式去得到那些信息（也就是该 `logical plan` 的开销如何）
+
+`Cost-based model` 需要考虑三种不同的代价：
+
+![CostBasedModel](./img/CostBasedModel.png)
+
+我们不可能实际去执行每个 `query plan` 来得到不同 `plan` 的代价，`DBMS` 会在内部维护一些关于 `table, attribute, index` 的统计信息 `statistics`，然后通过这些 `statistic` 去估计不同 `plan` 的代价。`DBMS` 会在后台自动维护这些 `statistic`，我们也可以手动去更新：
+
+![Statistic](./img/Statistic.png)
+
+#### Derivable Statistic
+
+> 这里给出我们衡量代价的标准
+
+`Selectivity Cardinarity` 用于去衡量在当前 `prodicate` 逻辑下，会有多少 `tuple` 会被选择
+
+对于 `Relation` $R$，`DBMS` 会维护以下信息：
+
+* $N_R$：$R$ 中 `tuple` 的个数
+* $V(A,R)$：$R$ 中 `attribute` $A$ 有多少个不同的个数
+* $A_{max},A_{min}$：`attribute` $A$ 的最大值与最小值
+
+![DerivableStatistic](./img/DerivableStatistic.png)
+
+这里我们会假设数据分布是均匀的 `uniformity`，每个数据出现的次数与其他数据相同
+
+![LogicalCostSample](./img/LogicalCostSample.png)
+
+这种方式对于简单的 `equality predicate` 可以很轻易地衡量对应的损耗，但对于复杂化的 `predicate`，就无法衡量了（对于范围这种情况我们无法直接得到结果）
+
+#### Selectivity
+
+因此，我们在此引入 `selectivity` 这个概念，用于去计算对于 `predicate` 给定的情况，满足约束的 `tuple` 的分数
+
+我们会使用一些公式对 `cost` 进行计算，不同的表达式会有不同的公式：
+
+![FormulaType](./img/FormulaType.png)
+
+##### Single Value
+
+对于单个值的衡量，我们可以直接通过计算 $SC(p)/N_R$ 得到：
+
+$$
+sel(Predicate)=\frac{SC(P)}{N_R}
+$$
+
+![SelectivitySingleValue](./img/SelectivitySingleValue.png)
+
+##### Range Value
+
+对于范围的衡量，我们可以计算其出现的概率：
+
+$$
+sel(A\ge a) = \frac{A_{max}-a+d}{A_{max}-A_{min}+1}
+$$
+
+![SelectivityRange](./img/SelectivityRange.png)
+
+##### Negation Value
+
+对于 `negation query` 的情况，我们用 $1$ 减去该 `prodicate` 对应的值即可：
+
+$$
+sel(not\ P)=1-sel(P)
+$$
+
+![SelectivityNegation](./img/SelectivityNegation.png)
+
+##### Conjunction & Disjunction
+
+对于 `conjunction`，我们会假设两个 `predicate` 相互独立，因此其析取 `conjunction` 的结果就是两个谓词的 $sel$ 相乘：
+
+$$
+sel(P_1\wedge P_2)=sel(P_1)\cdot sel(P_2)
+$$
+
+![SelectivityConjunction](./img/SelectivityConjunction.png)
+
+对于 `disjunction`，我们同样假设两个 `predicate` 相互独立，因此其合取 `disjunction` 的结果为两个谓词相加再减去其析取的结果：
+
+$$
+sel(P_1\vee P_2)=sel(P_1)+sel(P_2)-sel(P_1\wedge P_2)
+$$
+
+![SelectivityDisjunction](./img/SelectivityDisjunction.png)
+
+#### Estimation for Join
+
+上述我们讨论的都是关于单个谓词的衡量标准，也就是使用基数 `cardinality` 去计算每个 `attribute`，然后用该计算结果进行衡量该 `predicate` 的损耗
+
+但对于 `join` 操作，这种方式无法很好地估计其结果集的大小，因此我们需要一种能够衡量 `join` 操作的标准
+
+![EstimizationForJoin](./img/EstimizationForJoin.png)
+
+如果 `relation` $R$ 与 `relation` $S$ 的公共 `attribute` 为 $A$，那么：
+
+* 对于 $R$ 而言，最终结果集中所含 $A$ 的 `tuple` 可以衡量为：
+
+$$
+\frac{N_R\cdot N_S}{V(A,R)}
+$$
+
+* 对于 $S$ 而言，最终结果集中所含 $A$ 的 `tuple` 可以衡量为：
+
+$$
+\frac{N_R\cdot N_S}{V(A,S)}
+$$
+
+因此，总体上我们可以使用以下公式进行衡量：
+
+$$
+\frac{N_R\cdot N_S}{V(A,S)\cdot V(A,R)}
+$$
+
+![FormulaForJoin](./img/FormulaForJoin.png)
+
+这条公式依赖于以下三条假设：
+
+* 数据均匀分布
+* 谓词 `predicate` 相互独立
+* 满足容斥定理 `inclusion principle`
+
+![AssumptionForJoin](./img/AssumptionForJoin.png)
+
+#### Histogram
+
+在实际情况下，我们不会有如此理想的假设，因此我们需要一些额外的方式去衡量每种操作的代价
+
+![RealitySituation](./img/RealitySituation.png)
+
+##### Equi-Width Histogram
+
+我们引入等宽直方图 `equi-width histogram` 来衡量不同操作的代价：
+
+我们将原始数据的每个 `key` 所出现的次数统计出来，可以得到下图
+
+![EquiWidthHistogram](./img/EquiWidthHistogram.png)
+
+在这里，我们有 $15$ 个 `key`，每个 `key` 假设 $32\ bits$，因此总共为 $60\ bytes$ 
+
+我们将相同范围内的 `key` 划分一个 `bucket`，然后将同一个 `bucket` 内的 `key` 出现的次数都相加起来，那么这样可以减小存储的压力：
+
+![BucketEquiWidth](./img/BucketEquiWidth.png)
+
+这样子，只要 `key` 处于同一个范围，我们就用这个范围对应的值当作是该 `key` 所出现的次数。例如，对于 `key` 为 $7,8,9$ 的情况，我们都用 $15$ 来代替其所出现的次数
+
+##### Equi-Depth Histogram
+
+这种方法有一个弊端是，对于同一个范围内的 `key`，会出现方差过大导致衡量误差过大的情况。例如，如果在范围 $[1,3]$ 中，`key` 为 $1,2$ 的出现次数都为零，但 $3$ 的出现次数为 $10$，这样当我们去衡量 `key` 为 $1,2$ 时便会出现很大的偏差
+
+因此我们需要引入等深直方图 `equi-depth histogram`：
+
+![EquiDepthHistogram](./img/EquiDepthHistogram.png)
+
+我们每个 `bucket` 所含有不同的 `key` 不再相同，我们希望在最终得到的直方图中，每个柱子的高度大致相同，因此我们的 `bucket` 的取值不再固定
+
+这么做的好处是，我们通过不固定 `bucket` 所跨越的 `key` 的数量，这样子可以很好的消除因为方差过大导致的衡量误差的影响
+
+#### Sampling
+
+我们可以对原始数据进行采样 `sampling`，得到 `table sample`，然后我们依据该 `table sample` 来对不同操作的损耗进行衡量
+
+在生成 `table sample` 时，我们不必将整个 `table` 都扫描，而是可以跳着扫描，这样子可以减少扫描的次数（在下面的例子中，我们是每隔一个扫描一条 `tuple`）
+
+![Sampling](./img/Sampling.png)
+
+#### Query Optimization
+
+在拥有了具体的 `cost model`，我们可以大致衡量不同操作的性能，因此我们可以通过引入 `cost model` 来衡量不同 `logical plan` 的性能如何
+
+![CostBasedForQueryOptimization](./img/CostBasedForQueryOptimization.png)
+
+##### Single-Relation
+
+对于单表查询 `single relation query` 的情况，`optimizer` 会选择最佳的访问方式 `access method`，然后通过使用一些简单的启发式规则 `heuristic` 来对 `logical plan` 进行优化。我们不需要引入额外的消耗模型 `cost model` 去衡量不同 `logical plan` 的性能
+
+![SingleRelation](./img/SingleRelation.png)
+
+这里的原因如下：
+
+`OLTP` 类型的查询很容易优化的原因在于它们是能确定搜索参数的 `search argument able`。换句话说，我们可以很容易地去找到一个最优的 `index` 去执行该 `logical plan`
+
+![ReasonForSingleRelation](./img/ReasonForSingleRelation.png)
+
+在上图中，`id` 为 `primary key`，因此我们直接用对应的索引就可以快速找到对应的值
+
+##### Multi-Relation
+
+在多个 `logical plan` 中，我们会严格限制搜索空间，并选择那些满足条件的 `plan`，之后再对它们进行 `cost` 衡量
+
+![MultiRelation](./img/MultiRelationSample.png)
+
+对于多个 `table` 的查询计划 `query plan`，由于一般都涉及到 `cartesian product`，因此我们可以将其转化为 `join` 操作。更进一步，我们可以对得到的 `logical plan` 中只选择左深树 `left-deep tree`
+
+![LeftDeepTree](./img/LeftDeepTree.png)
+
+在上图中，我们会选择最左边那个
+
+![LeftDeepTreeAnswer](./img/LeftDeepTreeAnswer.png)
+
+这么做的原因在于，左深树可以很好的适应 `pipeline` 的执行模型 `process model`。换句话说，如果我们选择使用 `vocano model` 的话，下一层算子 `operator` 的结果一旦产生，可以**马上**作为上一层 `operator` 的输入
+
+关于为什么选择左深树这个问题，原因如下：
+
+![ReasonForLeftDeepTree](./img/ReasonForLeafDeepTree.png)
+
+除了选择 `left-deep tree` 外，`DBMS` 还会进行枚举不同的 `logical plan`
+
+* 枚举不同的 `join` 顺序
+* 枚举不同的 `operator`
+* 枚举不同的访问路径
+
+![EnumerateMultiRelation](./img/EnumerateMultiRelation.png)
+
+我们可以用动态规划去得到一条最优的路径（损耗最小）
+
+![DynamicProgramming](./img/DynamicProgramming.png)
+
+在上图中，我们选择两条消耗最低的：
+
+![DynamicProgramming1](./img/DynamicProgramming1.png)
+
+重复这个过程：
+
+![DynamicProgramming2](./img/DynamicProgramming2.png)
+
+同样选择两条 `cost` 最小的：
+
+![DynamicProgramming3](./img/DynamicProgramming3.png)
+
+最终得到的结果如下：
+
+![DynamicProgrammingAnswer](./img/DynamicProgrammingAnswer.png)
+
+##### Candidate Plan
+
+下面给出一个通过枚举不同 `join` 顺序、`operator` 以及访问路径的例子
+
+![CandidataPlan](./img/CandidatePlan.png)
+
+* Step #1:
+
+首先枚举 `join` 的顺序，需要保证都是 `left deep tree`
+
+![Step1](./img/Step1.png)
+
+* Step #2:
+
+然后是对每个 `operator` 进行枚举，进而得到消耗最小的 `operator`
+
+![Step2](./img/Step2.png)
+
+* Step #3:
+
+最好对访问方式 `access method` 进行枚举
+
+![Step3](./img/Step3.png)
+
+#### Conclusion
+
+* 尽可能早的对数据进行过滤
+* 选择不同的 `cost model`
+  * `Selectivity`
+  * `Histogram`
+  * `Sampling`
+* 利用动态规划、枚举等方式确定 `logical plan`
 
