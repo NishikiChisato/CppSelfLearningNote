@@ -16,6 +16,7 @@
       - [Aggregate Function](#aggregate-function)
       - [Aggregate Semantic](#aggregate-semantic)
       - [Aggregate Implementation](#aggregate-implementation)
+    - [Nested Loop Join](#nested-loop-join)
 
 ## Architecture Layout
 
@@ -155,11 +156,11 @@ Update { table_oid=20, target_exprs=[#0.0, 15445, #0.2, #0.3] } | (__bustub_inte
 
 #### Aggregate Function
 
-我们首先需要对不同的 `aggregate` 函数的行为进行辨别
+我们首先需要对不同的 `aggregate` 函数的行为进行确定
 
-* 对于 `count(*)` 而言，`null` 值无所谓，但如果本身为空的话需要**初始化为 $0$**（这是因为 `CountStarAggregate expression` 的 `evaluate` 函数会自动返回 $1$）
-* 对于 `cound(col)` 而言，不能加入 `null` 值，但如果本身为空需要**初始化为 $1$**
-* 对于 `min(), max(), sum()` 而言，不能加入 `null` 值，但初始化时需要用输入值对其赋值
+* 对于 `count(*)` 而言，`null` 值无所谓，但如果本身为空的话需要**初始化为 $0$**（这是因为 `CountStarAggregate expression` 的 `evaluate` 函数会自动返回 $1$）；更新时每次加 $1$
+* 对于 `cound(col)` 而言，不能加入 `null` 值，但如果本身为空需要**初始化为 $1$**；更新时每次加 $1$
+* 对于 `min(), max(), sum()` 而言，不能加入 `null` 值，但初始化时需要用输入值对其赋值；更新时按照对应的函数对 `Value` 进行操作
 
 #### Aggregate Semantic
 
@@ -203,7 +204,9 @@ EXPLAIN SELECT v1, min(v1), sum(v2), count(*), count(v1) FROM t1 GROUP BY t1;   
 
 实际上实现是非常简单的，我们只需要按照 `ppt` 上讲的做即可：
 
-在构建 `hash table` 时，我们会对**每个** `tuple` 中，将所有满足 `group_bys` 的属性给取出来，作为 `hash table` 的 `key`。而 `hash table` 的 `value` 则是将**每个** `tuple` 中，**所有**满足 `aggregates` 的属性
+* `Init` 阶段
+
+在构建 `hash table` 时，我们会对**每个** `tuple` 中，将所有满足 `group_bys` 的属性给取出来，作为 `hash table` 的 `key`。而 `hash table` 的 `value` 则是将**每个** `tuple` 中，**所有**满足 `aggregates` 的属性（换句话说，有多少个不同的 `agg` 函数，`value` 中就有多少个值）
 
 注意到 `hash table` 中的 `key` 和 `value` 均为数组 `vector<Value>`。实际上，我们以所有满足 `group_bys_` 的属性作为 `key`，有可能 `group_bys_` 会有多个，因此需要数组来进行存储；而我们输出的 `aggregate` 也有可能有多个，我们也使用数组来进行存储
 
@@ -211,3 +214,39 @@ EXPLAIN SELECT v1, min(v1), sum(v2), count(*), count(v1) FROM t1 GROUP BY t1;   
 
 对于 `group_bys_` 为空的情况，做一次特殊判断即可
 
+我们每次往 `hash table` 中加入一个新的 `key-value pair`，如果该 `key` 不存在，那么则新建一个；如果已存在，那么更新对应的 `value`
+
+* `Next` 阶段
+
+我们每次调用 `Next` 函数时，都从 `hash table` 中**取出一个元素**，我们用 `hash table` 的 `key` 和 `value` 作为最终的输出 `tuple`（这样得到的 `tuple` 的 `schema` 一定满足 `aggregate operator` 的 `output schema`）
+
+### Nested Loop Join
+
+对于 `inner join` 而言，只匹配列中具有相同的值，不会产生 `null` 在最终结果里面；`left join` 在 `inner join` 的基础上，对于那些列中没有匹配的值，会产生 `null` 值在最终结果里面
+
+举个例子就是：
+
+```sql
+bustub> select * from test_simple_seq_1 s1 inner join test_simple_seq_2 s2 on s1.col1 + 5 = s2.col1;
+---
+bustub> select * from test_simple_seq_1 s1 left join test_simple_seq_2 s2 on s1.col1 + 5 = s2.col1;
+```
+
+后者的结果里面会有一些 `null` 值
+
+对于 `inner join` 而言，分别对 `outer (left) table` 和 `inner (right) table` 进行循环，索引 `id` 分别用 `o_idx` 和 `i_idx` 表示
+
+如果当前有满足要求的 `tuple`，那么 `o_idx` 不变，`i_idx` 加一
+
+如果当前没有满足要求的 `tuple`，那么 `i_idx` 不断加一；当达到最大值时，将 `o_idx` 加一，`i_idx` 归零
+
+对于 `left join` 而言
+
+
+---
+
+对于 `expression` 的 `evaluate` 和 `evaluatejoin` 函数
+
+前者用于计算该 `expression` 在单个 `tuple` 上的结果，对象是单个 `tuple`
+
+后者用于计算将两个 `tuple` 合并起来之后，在其基础上该 `expression` 的结果
