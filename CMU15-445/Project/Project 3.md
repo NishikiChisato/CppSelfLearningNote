@@ -17,6 +17,7 @@
       - [Aggregate Semantic](#aggregate-semantic)
       - [Aggregate Implementation](#aggregate-implementation)
     - [Nested Loop Join](#nested-loop-join)
+    - [Hash Join](#hash-join)
 
 ## Architecture Layout
 
@@ -250,3 +251,18 @@ bustub> select * from test_simple_seq_1 s1 left join test_simple_seq_2 s2 on s1.
 前者用于计算该 `expression` 在单个 `tuple` 上的结果，对象是单个 `tuple`
 
 后者用于计算将两个 `tuple` 合并起来之后，在其基础上该 `expression` 的结果
+
+### Hash Join
+
+```SQL
+EXPLAIN SELECT * FROM __mock_table_1 LEFT OUTER JOIN __mock_table_3 ON colA = colE;
+EXPLAIN SELECT * FROM __mock_table_1 JOIN __mock_table_3 ON colA = colE;
+EXPLAIN SELECT * FROM __mock_table_1, __mock_table_3 WHERE colA = colE;
+```
+
+`left join` 本质上是 `left outer join`
+
+当使用 `where` 时，`nlj` 中的 `predicate` 始终为 `true`；当使用 `on` 时，`nlj` 中的 `predicate` 为具体的表达式
+
+对于 `predicate` 始终为 `true` 的情况，我们可以将 `filter` 中的 `predicate` 认为是 `hash join` 中的 `predicate`，因为在 `optimize` 中会对 `filter` 和 `nlj` 进行合并
+
