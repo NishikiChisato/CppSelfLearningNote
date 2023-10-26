@@ -18,6 +18,7 @@
       - [Aggregate Implementation](#aggregate-implementation)
     - [Nested Loop Join](#nested-loop-join)
     - [Hash Join](#hash-join)
+    - [Sort](#sort)
 
 ## Architecture Layout
 
@@ -265,4 +266,15 @@ EXPLAIN SELECT * FROM __mock_table_1, __mock_table_3 WHERE colA = colE;
 当使用 `where` 时，`nlj` 中的 `predicate` 始终为 `true`；当使用 `on` 时，`nlj` 中的 `predicate` 为具体的表达式
 
 对于 `predicate` 始终为 `true` 的情况，我们可以将 `filter` 中的 `predicate` 认为是 `hash join` 中的 `predicate`，因为在 `optimize` 中会对 `filter` 和 `nlj` 进行合并
+
+* `predicate` 的顺序
+
+```SQL
+EXPLAIN SELECT * FROM test_1 t1, test_2 t2 WHERE t1.colA = t2.colA AND t1.colB = t2.colC;
+EXPLAIN SELECT * FROM test_1 t1, test_2 t2 WHERE t2.colA = t1.colA AND t1.colB = t2.colC;
+```
+
+### Sort
+
+在我的实现里面，我使用了 `vector` 来存储 `tuple`，在每次初始化时都需要对 `vector` 进行清空，不然前一次的结果会保留到下一次的运算中
 
