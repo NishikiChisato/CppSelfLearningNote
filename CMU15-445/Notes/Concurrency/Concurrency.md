@@ -54,6 +54,11 @@
       - [Index Locking](#index-locking)
         - [Index Lock Schema](#index-lock-schema)
       - [Isolation Level](#isolation-level-1)
+  - [Multi-Version Concurrency Control (MVCC)](#multi-version-concurrency-control-mvcc)
+    - [Concept](#concept-2)
+    - [Snapshot Isolation (SI)](#snapshot-isolation-si)
+    - [Concurrency Control Protocol](#concurrency-control-protocol)
+    - [Version Storage](#version-storage)
 
 
 ## Concurrency Control Thery
@@ -851,6 +856,8 @@ $T_1$ 先于 $T_2$ 执行，因此前者的 `timestamp` 比后者小，我们最
 
 我们通过使用 `read set` 和 `write set` 来跟踪一个事务进行的读取和写入操作，并将这些对于对象的修改作用在 `private` 对象上
 
+因此，在 `read phase` 中，`txn` 是会对对象进行**读取和写入**的，只不过是在 `private` 的工作区中
+
 ![ReadPhase](./img/ReadPhase.png)
 
 #### Validation Phase
@@ -893,7 +900,9 @@ $T_1$ 先于 $T_2$ 执行，因此前者的 `timestamp` 比后者小，我们最
 如果 `Validation` 失败，那么需要 `restart`，否则需要对全局数据进行写入。写入分为两种：
 
 - `Serial Commit`：使用 `global latch` 来序列化所有的写入
-- `Parallel Commit`：基于 `primary key` 的顺序来获取细粒度的 `latch`，然后依次写入（`细粒度本身就可以增大并发性）
+- `Parallel Commit`：基于 `primary key` 的顺序来获取细粒度的 `latch`，然后依次写入（细粒度本身就可以增大并发性）
+
+在 `write phase` 中，我们会将 `private` 工作区内的更改同步到 `global`，使其变得可见 `visable`
 
 ![WritePhase](./img/WritePhase.png)
 
@@ -1023,4 +1032,87 @@ $T_1$ 先于 $T_2$ 执行，因此前者的 `timestamp` 比后者小，我们最
 不同的 `isolation level` 的实现如下：
 
 ![IsolationImplementation](./img/IsolationImplementation.png)
+
+---
+
+## Multi-Version Concurrency Control (MVCC)
+
+### Concept
+
+`MVCC` 的基本概念如下：
+
+我们会维护一个 `logical` 对象的多个 `physical` 版本，以此来增加系统的并行性
+
+- 当事务需要对某个对象进行写入的时候，`DBMS` 会创建该对象的一个新的版本
+- 当事务需要读取某个对象时，它会读取该事务开始时最新的版本
+
+需要说明的是，**`MVCC` 并不能实现并发**，它需要与 `2PL, T/O, OCC` 这些并发技术结合起来
+
+![MVCC](./img/MVCC.png)
+
+在 `2PL` 中，读取和写入同一个对象是不允许的，总会有一个会被阻塞；在 `T/O, OCC` 中，我们会直接将会导致错误的那个事务给 `abort` 掉。也就是说，在我们已经讨论的两种并发策略中，我们都无法实现**同时**对一个对象进行读取和写入
+
+`MVCC` 的思想有点像 `Copy On Write`。通过维护一个对象的多个版本，使得一个对象的读取和写入可以同时进行，也就是下面所说的：
+
+- 写入不会阻塞读取，读取不会阻塞写入
+
+当我们记录了一个对象的多个版本后，对于那些只读的事务，我们可以只读取满足一致性的快照 `snapshot`，这样便可以保证读取不会出错
+
+> 这里的 `time-travel queries` 是指我们可以对数据库的历史进行查询
+
+![MVCC_Concept](./img/MVCC_Concept.png)
+
+举个例子：
+
+初始时，$A$ 对象的版本为 $A_0$，开始时间为 $0$，结束时间为无穷
+
+![MVCCExample1](./img/MVCCExample1.png)
+
+当我们需要读取时，直接得到的就是 $A_0$
+
+当 $T_2$ 对 $A$ 进行写入时，我们需要额外创建一个新的版本，并对 $A_0$ 的 `end` 进行更新
+
+![MVCCExample2](./img/MVCCExample2.png)
+
+与此同时，我们有一个事务状态表 `txn status table`，用于记录不同事务的状态
+
+![MVCCExample3](./img/MVCCExample3.png)
+
+由于 $A_1$ 的 `end` 为无穷，因此 $T_1$ 此时读取到的为 $A_0$
+
+### Snapshot Isolation (SI)
+
+这里的 `consistent snapshot` 是指，当前事务能够看到**数据库的快照**，其满足 `ACID` 中的 `consistency`。换句话说，如果有多个事务并发运行，那么每个事务都可以看到当前数据库的一个快照，这些快照都是相一致的，并且**相互隔离**
+
+我们参考 `lecture notes` 中的说明：
+
+> Snapshot Isolation involves providing a transaction with a consistent snapshot of the database when the transaction started. Data values from a snapshot consist of only values from committed transactions, and the transaction operates in complete isolation from other transactions until it finishes. This is idea for read-only transactions since they do not need to wait for writes from other transactions. Writes are maintained in a transaction’s private workspace and only become visible to the database once the transaction successfully commits. If two transactions update the same object, the first writer wins.
+
+一致性快照 `consistent concept` 中的数据只会来自于**已经提交的事务**，并且不同事务之间的操作**不会相互影响**。换句话说，对于只读事务而言，该事务直接读取需要读取的对象；对于写入事务而言，所有的更改只会暂时保存在 `private workspace` 中，在事务提交时再同步到全局数据库中
+
+我们规定，如果两个事务同时更新同一个对象，那么只保留第一个事务的更新，第二个会 `restart`
+
+![SnapShot](./img/SnapShot.png)
+
+在没有 `2PL, T/O, OCC` 等并发协议的帮助下，`MVCC` 容易造成数据竞争 `data race`，这就是上面写的 `Write Skew Anomaly`
+
+`MVCC` 的整体设计分为以下几个部分：
+
+- `Concurrency Control Protocol`：并发协议
+- `Version Storage`：版本存储
+- `Garbage Collection`：垃圾回收
+- `Index Management`：索引管理
+- `Deletes`：删除
+
+### Concurrency Control Protocol
+
+并发协议就是我们在前面讨论过的那些
+
+![MVCCProtocol](./img/MVCCProtocol.png)
+
+### Version Storage
+
+
+
+
 
