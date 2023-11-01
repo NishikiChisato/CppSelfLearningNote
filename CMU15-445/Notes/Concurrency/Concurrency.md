@@ -42,6 +42,18 @@
     - [Basic Timestamp Ordering (T/O) Protocol](#basic-timestamp-ordering-to-protocol)
       - [Thomas Write Rule](#thomas-write-rule)
     - [Optimistic Concurrency Control (OCC)](#optimistic-concurrency-control-occ)
+      - [Read Phase](#read-phase)
+      - [Validation Phase](#validation-phase)
+        - [Backward](#backward)
+        - [Forward](#forward)
+      - [Write Phase](#write-phase)
+      - [Observation](#observation)
+    - [Isolation Level](#isolation-level)
+      - [Re-Execute Scan](#re-execute-scan)
+      - [Predate Locking](#predate-locking)
+      - [Index Locking](#index-locking)
+        - [Index Lock Schema](#index-lock-schema)
+      - [Isolation Level](#isolation-level-1)
 
 
 ## Concurrency Control Thery
@@ -817,11 +829,198 @@ $T_1$ 先于 $T_2$ 执行，因此前者的 `timestamp` 比后者小，我们最
 
 ### Optimistic Concurrency Control (OCC)
 
+`OCC` 的说明如下
+
+> **Optimistic concurrency control (OCC)** is another optimistic concurrency control protocol which also uses timestamps to validate transactions. OCC works best when the number of conflicts is low.
+
+![OCC](./img/OCC.png)
+
+`DBMS` 会为每个对象创建一个 `private` 的工作区，所有对于该对象的修改都会作用于该 `private` 工作区内的对象，而不会作用于 `global` 的对象
+
+当事务需要提交时，`DBMS` 会比较 `private` 工作区的 `write set`，去检查是否存在冲突。如果不存在冲突，那么向 `global` 对象进行写入
+
+> OCC consists of three phases:
+> 
+> 1. Read Phase: Here, the DBMS tracks the read/write sets of transactions and stores their writes in a private workspace.
+>
+> 2. Validation Phase: When a transaction commits, the DBMS checks whether it conflicts with other transactions.
+>
+> 3. Write Phase: If validation succeeds, the DBMS applies the private workspace changes to the database. Otherwise, it aborts and restarts the transaction.
+
+#### Read Phase
+
+我们通过使用 `read set` 和 `write set` 来跟踪一个事务进行的读取和写入操作，并将这些对于对象的修改作用在 `private` 对象上
+
+![ReadPhase](./img/ReadPhase.png)
+
+#### Validation Phase
+
+当事务需要 `commit` 时，`DBMS` 会检查该事务的更改是否会与其他事务相冲突。我们只需要考虑 `R/W` 和 `W/W` 冲突。**本阶段用于检测 `valid` 是否存在冲突**，如果不存在则进行提交
+
+`validation` 的方向有两种：
+
+- `Backward Validation`: `from younger transactions to older transactions`
+- `Forward Validation`: `from older transactions to younger transactions`
+
+![ValidationPhase](./img/ValidationPhase.png)
+
+##### Backward
+
+我们检查当前事务的 `read/write set` 与**前面已提交的事务的 `read/write set`** 之间是否存在交集
+
+![Backward](./img/Backward.png)
+
+##### Forward
+
+我们将当前事务的 `read/write set` 与那些**还没有提交事务的 `read/write set`** 进行比对，求其交集
+
+![Forward](./img/Forward.png)
+
+我们以 `Forward Validation` 为例，说明具体的 `Validation` 是如何进行的：
+
+`DBMS` 会赋予每个 `txn` 一个 `timestamp`，如果该事务还没有 `commit`，那么其 `timestamp` 为 $\infin$
+
+在 $TS(T_i)\lt TS(T_j)$ 的情况下，如果以下三种情况满足，那么通过 `Validation Phase`：
+
+- 如果 $T_1$ 在 $T_2$ **开始之前**完成其**所有阶段**
+- 如果 $T_1$ 在 $T_2$ **开始 `write phase` 之前**完成其**所有阶段**，并且 $T_i$ 所写入的对象与 $T_j$ 读取的对象没有交集
+  - $\text{WriteSet}(T_i)\cap \text{ReadSet}(T_j)=\phi$
+- **$T_i$ 在 $T_j$ 完成其 `read phase` 之前完成 `read phase`**，并且 $T_i$ 所写入的对象与 $T_j$ 读取或写入的对象没有交集
+  - $\text{WriteSet}(T_i)\cap \text{ReadSet}(T_j)=\phi,\ \text{and}\ \text{WriteSet}(T_i)\cap \text{WriteSet}(T_j)=\phi$
+
+#### Write Phase
+
+如果 `Validation` 失败，那么需要 `restart`，否则需要对全局数据进行写入。写入分为两种：
+
+- `Serial Commit`：使用 `global latch` 来序列化所有的写入
+- `Parallel Commit`：基于 `primary key` 的顺序来获取细粒度的 `latch`，然后依次写入（`细粒度本身就可以增大并发性）
+
+![WritePhase](./img/WritePhase.png)
+
+#### Observation
+
+由于 `OCC` 是 `optimistic` 类型的协议，因此我们会假设 `conflict` 是不常发生的。因此如果数据库非常大，或者其本身不是高度倾斜的，那么这种假设就会带来很大的性能损耗
+
+![OCCObservation](./img/OCCObservation.png)
+
+具体的开销如下：
+
+- 复制对象本身开销很大
+- `Validation Phase` 和 `Write Phase` 存在性能瓶颈，因为这个部分的执行相对复杂
+- 因为如果检查失败，那么前面所做出的操作就全部浪费了，不像 `2PL` 那样会阻塞
+
+![OCCIssue](./img/OCCIssue.png)
+
+### Isolation Level
+
+我们目前所面对的并发都是事务内部，也就是，我们保证事务内部并发执行时，不会产生错误的结果。但是事务之间并发执行仍有可能会发生错误的结果：
+
+![PhantomProblem](./img/PhantomProblem.png)
+
+问题在于，基于单个对象进行读取和写入的 `conflict serialazability` 想要保证 `serializability` 的前提是对象的集合是固定的。说人话就是，它只能保证对已经存在的对象的修改是序列化的，但无法检查已存在的对象是否发生过改变
+
+![WTF](./img/WTF.png)
+
+解决方法如下：
+
+![SolutionPhantom](./img/SolutionPhantom.png)
+
+#### Re-Execute Scan
+
+对于事务中的每个查询，我们都会记录其扫描的集合。当事务提交的时候，我们再执行一次对于的操作，看结果是否发生变化
+
+![Re-ExecuteScan](./img/Re-ExecuteScan.png)
+
+显然，这是一种最暴力的做法，因为这相当于我将一个事务执行了两次，效率并不高
+
+#### Predate Locking
+
+我们对不同的 `SQL` 语句进行加锁，对于 `SELECT`，加 `S`；而其他的，加 `X`
+
+这种做法会破坏事务中语句执行的并发性
+
+![PredateLock](./img/PredicateLock.png)
+
+#### Index Locking
+
+我们可以通过对索引 `index` 进行加锁，来解决事务间并发的问题
+
+![IndexLock](./img/IndexLock.png)
+
+`people` 表的 `schema` 在上面有给出，这当中有一个 `attribute`，被称为 `status`
+
+如果 `status` 这个属性存在索引的话，那么我们需要对包含 `status = lit` 的索引页进行加锁；如果索引中没有包含 `status = lit` 的项，那么我们需要对**可能存在这一项的索引**中的索引页进行加锁
+
+![IndexWithoutLock](./img/IndexWithoutLock.png)
+
+如果这个属性没有索引，那么这个事务必须获取以下两种锁：
+
+- 对表中的所有 `page` 进行加锁
+- 对这个表本身进行加锁
+
+##### Index Lock Schema
+
+下面我们简要介绍一下 `index lock` 的类型
+
+- `Key-Value Lock`
+
+我们对索引中的 `key` 和 `value` 这一对 `pair` 进行加锁
+
+![Key-ValueLock](./img/Key-ValueLock.png)
 
 
+- `Gap Lock`
+
+在两个 `pair` 之间，我们假定存在一个 `gap`，我们可以对这个 `gap` 加锁
+
+![GapLock](./img/GapLock.png)
 
 
+- `Key-Range Lock`
 
+我们可以将二者结合起来，来对 `key-value pair` 和 `gap` 进行加锁
 
+![KeyRangeLockConcept](./img/KeyRangeLockConcept.png)
 
+可以看到，下图中，我们还是对一个 `key-value` 进行加锁，只不过在其基础上加了一个 `gap`
+
+加入了 `gap lock` 后，我们可以保证在当前的 `key` 之后，**不会插入一个新的数据**
+
+![KeyRangeLock](./img/KeyRangeLock.png)
+
+- `Hierarchical Lock`
+
+由于 `key-range lock` 只是在 `key` 的基础上多加了一个 `gap`，那么我们可以进一步加大锁的细粒度，对多个 `key-range lock` 进行加锁
+
+![HierarchicalLock](./img/HierarchicalLock.png)
+
+#### Isolation Level
+
+我们之前介绍过的 `2PL` 和 `T/O` 等，都是为了最终得到一个等价于 `serial schedule` 的 `schedule`。但我们强制执行的话会造成不小的系统开销以及降低相应的并行性
+
+在实际的执行中，某些事物可以接受的 `non-serial schedule`，因此我们在此引入不同的隔离等级 `isolation level`，用于满足不同的需求
+
+![IsolationLevel](./img/IsolationLevel.png)
+
+随着 `Isolation Level` 的降低，会引发以下问题：
+
+- `Dirty Read`：某个事务读取到了另外一个事务**修改过但还未提交**的对象的值
+- `Unrepeatable Read`：对于同一个事务而言，前后两次读取得到的值不一样（因为被其他事务修改过）
+- `Phantom Read`：两个事务前后两次读取同一个谓词逻辑下的集合，有可能会出现读取的对象集合不一样（前一个事务可能会修改这个对象集合内的对象）
+
+不同的 `isolation level` 中可能出现的问题如下：
+
+> **Isolation Levels (Strongest to Weakest)**:
+> 1. SERIALIZABLE: No Phantoms, all reads repeatable, and no dirty reads.
+> 2. REPEATABLE READS: Phantoms may happen.
+> 3. READ-COMMITTED: Phantoms and unrepeatable reads may happen.
+> 4. READ-UNCOMMITTED: All anomalies may happen.
+
+![IsolationLevels](./img/IsolationLevels.png)
+
+![IsolationTable](./img/IsolationTable.png)
+
+不同的 `isolation level` 的实现如下：
+
+![IsolationImplementation](./img/IsolationImplementation.png)
 
