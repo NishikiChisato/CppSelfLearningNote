@@ -68,6 +68,11 @@
     - [Index Management](#index-management)
     - [MVCC Index](#mvcc-index)
     - [Delete](#delete)
+  - [Database Logging](#database-logging)
+    - [Failure Classification](#failure-classification)
+      - [Storage Type](#storage-type)
+      - [Failure Type](#failure-type)
+    - [Buffer Pool Policies](#buffer-pool-policies)
 
 
 ## Concurrency Control Thery
@@ -1317,5 +1322,59 @@ $T_1$ 先于 $T_2$ 执行，因此前者的 `timestamp` 比后者小，我们最
 
 ---
 
+## Database Logging
 
+为了在崩溃 `crash` 发生时保证数据库一致性 `consistency`，事务原子性 `atomicity`以及持久性 `durability`，我们需要讨论一下恢复算法 `recovery algorithm`
+
+> - `consistency` 是指数据库所表示的对象需要遵循现实世界的约束，举个具体的例子就是，$A$ 和 $B$ 之间进行转账，那么在转账前和转账后两个账号的钱的总和应该相等。并且在事务开始前如果数据库是一致的，那么在事务结束后也需要是一致的
+>
+> - `Atomicity` 是指一个事务的执行结果只有两种：执行与不执行，不会出现执行一半的情况
+>
+> - `Durability` 是指一个已提交的事务所造成的影响需要是永久的
+
+`Recovery Algorithm` 分为两个部分：
+
+- 在事务正常执行的过程中，我们需要执行哪些额外操作才能保证从崩溃中恢复过来
+- 在崩溃发生后，我们需要执行哪些操作才能保证 `A (Atomicity), C (Consistency), D (Durability)`
+
+![CrashRecovery](./img/CrashRecovery.png)
+
+### Failure Classification
+
+#### Storage Type
+
+基于底层的存储介质（`volatile` 和 `non-volatile`），数据库被划分为了许多不同的组件，我们需要对各个存储介质的情况和崩溃的类型加以说明
+
+![RecoveryIntro](./img/RecoveryIntro.png)
+
+不同的存储介质如下：
+
+![StorageType](./img/StorageType.png)
+
+#### Failure Type
+
+数据库当中的错误主要分为三类，这里我们看一下概念就好，我直接将 `notes` 中的原文给出（因为 `ppt` 没有 `notes` 详细）
+
+> **Type #1: Transaction Failures**
+Transactions failures occur when a transaction reaches an error and must be aborted. Two types of errors that can cause transaction failures are logical errors and internal state errors.
+>
+> - Logical Errors: A transaction cannot complete due to some internal error condition (e.g., integrity, constraint violation).
+> 
+> - Internal State Errors: The DBMS must terminate an active transaction due to an error condition(e.g., deadlock)
+> 
+> **Type #2: System Failures**
+> System failures are unintented failures in the underlying software or hardware that hosts the DBMS. These failures must be accounted for in crash recovery protocols.
+> - Software Failure: There is a problem with the DBMS implementation (e.g., uncaught divide-by-zero exception) and the system has to halt.
+> 
+> - Hardware Failure: The computer hosting the DBMS crashes (e.g., power plug gets pulled). We assume that non-volatile storage contents are not corrupted by system crash. This is called the ”Fail-stop” assumption and simplifies the process recovery.
+> 
+> **Type #3: Storage Media Failure**
+> 
+> Storage media failures are non-repairable failures that occur when the physical storage device is damaged. When the storage media fails, the DBMS must be restored from an archived version. The DBMS cannotrecover from a storage failure and requires human intervention.
+>
+> - Non-Repairable Hardware Failure: A head crash or similar disk failure destroys all or parts of non-volatile storage. Destruction is assumed to be detectable. No DBMS can recover from this! Database must be restored from archived version.
+
+### Buffer Pool Policies
+
+![BufferPoolPoliciesObservation](./img/BufferPoolPoliciesObservation.png)
 
