@@ -73,6 +73,10 @@
       - [Storage Type](#storage-type)
       - [Failure Type](#failure-type)
     - [Buffer Pool Policies](#buffer-pool-policies)
+      - [Steal Policy](#steal-policy)
+      - [Force Policy](#force-policy)
+    - [Shadow Paging](#shadow-paging)
+      - [Sqlite Example](#sqlite-example)
 
 
 ## Concurrency Control Thery
@@ -195,7 +199,7 @@
 
 ![IsolationConcept](./img/IsolationConcept.png)
 
-`DBMS` 通过运行不同事物中的操作交错 `interleaving` 执行来实现 `concurrency`。具体的 `concurrency protocol` 有两种实现方式：
+`DBMS` 通过运行不同事务中的操作交错 `interleaving` 执行来实现 `concurrency`。具体的 `concurrency protocol` 有两种实现方式：
 
 * `Pessimistic`：悲观地认为问题发生的概率大，做出额外的操作让问题不发生
 * `Optimistic`：乐观地认为问题发生是少数的，当问题发生时再解决
@@ -1021,7 +1025,7 @@ $T_1$ 先于 $T_2$ 执行，因此前者的 `timestamp` 比后者小，我们最
 
 我们之前介绍过的 `2PL` 和 `T/O` 等，都是为了最终得到一个等价于 `serial schedule` 的 `schedule`。但我们强制执行的话会造成不小的系统开销以及降低相应的并行性
 
-在实际的执行中，某些事物可以接受的 `non-serial schedule`，因此我们在此引入不同的隔离等级 `isolation level`，用于满足不同的需求
+在实际的执行中，某些事务可以接受的 `non-serial schedule`，因此我们在此引入不同的隔离等级 `isolation level`，用于满足不同的需求
 
 ![IsolationLevel](./img/IsolationLevel.png)
 
@@ -1376,5 +1380,150 @@ Transactions failures occur when a transaction reaches an error and must be abor
 
 ### Buffer Pool Policies
 
+`database` 主要存储在 `non-volatile storage` 上，但这种存储介质的速度较慢，因此需要 `volatile` 介质作为中间层，这个过程如下：
+
+- 从 `disk` 中读取需要写入的对象
+- 在内存中对对象进行写入
+- 向 `disk` 写回那些 `dirty page`
+
 ![BufferPoolPoliciesObservation](./img/BufferPoolPoliciesObservation.png)
+
+为了实现 `A, C, D`，我们需要 `buffer pool manager, bpm` 能够做到 `undo` 和 `redo`
+
+- `Undo`：撤销未完成或者已 `abort` 的事务所造成的影响
+- `Redo`：重新执行一遍已提交事务
+
+> 这里或许会有疑问：事务已提交不就说明它被写入磁盘了吗，为什么还需要重新执行。实际上，`DBMS` 在向上层应用发出该事务已提交时，它并不一定会立刻将该事务所造成的影响写入到 `disk` 中，这种延迟写入的技术可以加快磁盘的 `I/O`
+
+![UndoRedo](./img/UndoRedo.png)
+
+我们来看一个会产生错误的例子：
+
+![BufferPoolSample1](./img/BufferPoolSample1.png)
+
+![BufferPoolSample2](./img/BufferPoolSample2.png)
+
+![BufferPoolSample3](./img/BufferPoolSample3.png)
+
+![BufferPoolSample4](./img/BufferPoolSample4.png)
+
+![BufferPoolSample5](./img/BufferPoolSample5.png)
+
+在这个例子中，$T_1$ 和 $T_2$ 都对同一个 `page` 进行写入，但这里出现了两个问题：
+
+- 当 $T_2$ 提交的时候，$T_1$ 还没有执行完，我们应该如何刷新这个 `page` 到磁盘
+- 当 $T_1$ `abort` 的时候，由于 $T_2$ 已经提交了，那么我们该如何回滚 `rollback` 才能恢复正确的状态
+
+这其实是两个问题：
+
+- 我们应该如何刷新一个 `dirty page`
+- 我们该在什么时候刷新一个 `dirty page`
+
+#### Steal Policy
+
+用于解决我们该如何刷新一个 `dirty page`
+
+`DBMS` 是否允许一个未提交的事务去刷新在 `disk` 中的已提交的事务的值
+
+![StealPolicy](./img/StealPolicy.png)
+
+#### Force Policy
+
+用于解决我们该何时刷新一个 `dirty page`
+
+在事务提交时，`DBMS` 是立刻对 `disk` 进行刷新还是延迟对 `disk` 进行刷新
+
+![ForcePolicy](./img/ForcePolicy.png)
+
+有了这两个策略 `policy`，我们回到刚才的例子：
+
+![NoStealForceSample1](./img/NoStealForceSample1.png)
+
+![NoStealForceSample2](./img/NoStealForceSample2.png)
+
+![NoStealForceSample3](./img/NoStealForceSample3.png)
+
+![NoStealForceSample4](./img/NoStealForceSample4.png)
+
+![NoStealForceSample5](./img/NoStealForceSample5.png)
+
+![NoStealForceSample6](./img/NoStealForceSample6.png)
+
+由于我们对 $T_2$ 写入磁盘时只是将 `page` 复制了一份，因此 `rollback` $T_1$ 的时候就几乎没有开销了，也就是 `trivial`
+
+关于 `buffer pool` 的部分，如果我们需要其满足 `A, C, D`， 那么我们直接对其应用 `No-steal` 和 `Force` 即可。这种方式十分容易实现，因为：
+
+- 我们不需要 `undo` 操作，因为所有未提交的事务都不会被写入 `disk`
+- 我们不需要 `redo` 操作，因为事务在 `commit` 时会立刻写入 `disk`，也就是不存在已 `commit` 但还未写入磁盘的情况
+
+这种方式的弊端在于，我们写入的页面不能超出物理内存，也就是不能出现换入换出的情况
+
+![NostealForce](./img/NostealForce.png)
+
+### Shadow Paging
+
+`Shadow paging` 是满足 `A, C, D` 的另一个具体实现
+
+对于那些需要修改的 `page`（我们用 `page table` 进行管理），我们对其做一次拷贝，得到两个版本：
+
+- `Master`：该 `page` 中的对象未被修改，用于 `undo`
+- `Shadow`：该事务实际修改的 `page`，用于对 `disk` 中的 `page` 进行更新
+
+`DBMS` 会有一个 `root` 指针去指向当前的 `master page table`，如果需要更新的话，那么将 `root pointer` 指向 `shadow page table`
+
+![ShadowPage](./img/ShadowPage.png)
+
+举个例子：
+
+![ShadowPageExample1](./img/ShadowPageExample1.png)
+
+初始时，`shadow page table` 和 `master page table` 所指的方向相同，都是相同的 `page`
+
+![ShadowPageExample2](./img/ShadowPageExample2.png)
+
+![ShadowPageExample3](./img/ShadowPageExample3.png)
+
+如果我们需要对 `shadow page` 进行更改，那么我们会复制一份原有的 `page`，然后再在新的 `page` 上面做更改
+
+![ShadowPageExample4](./img/ShadowPageExample4.png)
+
+![ShadowPageExample5](./img/ShadowPageExample5.png)
+
+当事务提交的时候，我们删去 `master page table`，然后将 `root pointer` 指向 `shadow page table`，之后不断重复这个过程
+
+![ShadowPageExample6](./img/ShadowPageExample6.png)
+
+`Shadow page` 只需要实现 `undo`，不需要实现 `redo`。这是因为，如果存在某个事务被 `abort`，那么我们直接将 `master page table` 中的那一项复制到 `shadow page table` 中即可
+
+![ShadowPageUndoRedo](./img/ShadowPageUndoRedo.png)
+
+`shadow page` 另一个问题是，容易造成磁盘空间破碎，也就是上面的最后一张图，这会造成原先连续存储的数据不再连续，对 `I/O` 读取造成开销。另外，我们总是需要对 `page table` 中的所有 `page` 进行拷贝，拷贝的开销也不能忽视
+
+![ShadowPageCons](./img/ShadowPageCons.png)
+
+#### Sqlite Example
+
+`sqlite` 中曾经使用过 `shadow page`，整体的工作行为如下：
+
+在对某个 `page` 进行写入之前，我们会先将其拷贝到 `journal file` 中，然后再对该 `page` 进行写入
+
+![SqliteExample1](./img/SqliteExample1.png)
+
+![SqliteExample2](./img/SqliteExample2.png)
+
+如果在将 `dirty page` 写入 `disk` 的过程中发生了崩溃，也就是下面这种情况：
+
+![SqliteExample3](./img/SqliteExample3.png)
+
+![SqliteExample4](./img/SqliteExample4.png)
+
+那么我们会从 `journal page` 中将原始数据读取出来，然后覆盖 `disk` 中只写入一半的数据
+
+![SqliteExample5](./img/SqliteExample5.png)
+
+![SqliteExample6](./img/SqliteExample6.png)
+
+
+
+
 
