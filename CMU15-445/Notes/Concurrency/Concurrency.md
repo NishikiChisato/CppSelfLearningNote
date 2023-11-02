@@ -59,6 +59,15 @@
     - [Snapshot Isolation (SI)](#snapshot-isolation-si)
     - [Concurrency Control Protocol](#concurrency-control-protocol)
     - [Version Storage](#version-storage)
+      - [Append-Only Storage](#append-only-storage)
+      - [Time-Travel Storage](#time-travel-storage)
+      - [Delta Storage](#delta-storage)
+    - [Garbage Collection](#garbage-collection)
+      - [Tuple Level](#tuple-level)
+      - [Transaction Level](#transaction-level)
+    - [Index Management](#index-management)
+    - [MVCC Index](#mvcc-index)
+    - [Delete](#delete)
 
 
 ## Concurrency Control Thery
@@ -1041,7 +1050,7 @@ $T_1$ 先于 $T_2$ 执行，因此前者的 `timestamp` 比后者小，我们最
 
 `MVCC` 的基本概念如下：
 
-我们会维护一个 `logical` 对象的多个 `physical` 版本，以此来增加系统的并行性
+我们会维护一个 `logical` 对象的多个 `physical` 版本（通过不同的 `timestamp` 来进行标记），以此来增加系统的并行性
 
 - 当事务需要对某个对象进行写入的时候，`DBMS` 会创建该对象的一个新的版本
 - 当事务需要读取某个对象时，它会读取该事务开始时最新的版本
@@ -1061,6 +1070,10 @@ $T_1$ 先于 $T_2$ 执行，因此前者的 `timestamp` 比后者小，我们最
 > 这里的 `time-travel queries` 是指我们可以对数据库的历史进行查询
 
 ![MVCC_Concept](./img/MVCC_Concept.png)
+
+> 这里给出数据库快照 `database snapshot` 的解释：
+>
+> A database snapshot is a read-only, static, and consistent view of a database at a specific point in time. It contains a copy of the data as it existed when the snapshot was created, and any changes made to the original database after the snapshot creation are not reflected in the snapshot. It allows users to query and analyze data without affecting the original database or interfering with ongoing transactions.
 
 举个例子：
 
@@ -1112,7 +1125,197 @@ $T_1$ 先于 $T_2$ 执行，因此前者的 `timestamp` 比后者小，我们最
 
 ### Version Storage
 
+在 `tuple` 中新建一个指针域 `pointer field`，对于每个 `logical tuple`，它都有多个不同的 `version` 的 `physical tuple`，我们将这些 `physical tuple` 构建成一个链表的形式 `version chain` ，因此链表的开头可以是最新的版本，也可以是最旧的版本，这两种方式各有优劣
 
+![VersionStorage](./img/VersionStorage.png)
+
+存储的方式有三种：
+
+- Approach #1: Append-Only Storage
+  -  New versions are appended to the same table space.
+- Approach #2: Time-Travel Storage
+  - Old versions are copied to separate table space.
+- Approach #3: Delta Storage
+  - The original values of the modified attributes are copied into a separate delta record space.
+
+#### Append-Only Storage
+
+我们将不同版本的 `physical tuple` 都存储在同一个 `table` 中。对于每一个新版本，我们简单地将其添加在当前 `table` 的后面。因此，在这种方法下，不同版本的 `tuple` 之间是相互混合的 `inter-mixed`
+
+![Append-Only](./img/Append-Only.png)
+
+这里的箭头表示当前是对 $A_1$ 进行了一次写入，得到新版本 $A_2$
+
+对于 `version chain` 的构建方式，有两种：
+
+![VersionChain](./img/VersionChain.png)
+
+- 对于 `O2N`，链表为从旧到新，因此最新的版本每次需要加在链表的最后。我们每次需要最新版本时都需要遍历一次链表
+- 对于 `N2O`，链表为从新到旧，因此最新的版本每次都加在链表的开头。我们每次需要最新版本时不需要遍历链表，但由于链表的头节点发生了改变，因此我们需要**修改所有的索引**
+
+#### Time-Travel Storage
+
+我们在 `table` 中只存储最新版本，将旧版本存储在 `time-travel table` 中，并用 `version chain` 来将这些不同的 `physical tuple` 构建起来 
+
+![TimeTravel](./img/TimeTravel.png)
+
+#### Delta Storage
+
+上面这种方式每次都需要存储整个 `tuple`，我们可以对其做优化，每次只存储修改的值，这跟 `tuple` 存储中的 `log structured` 相似
+
+![DeltaStorage1](./img/DeltaStorage1.png)
+
+每次有更新时，对 `main table` 原先的值进行覆盖，**并将新值写入到 `time-travel/delta table` 中**，然后更新指针
+
+![DeltaStorage2](./img/DeltaStorage2.png)
+
+![DeltaStorage3](./img/DeltaStorage3.png)
+
+> 这里还差将 $A_3$ 写入到 `delta table` 中
+
+### Garbage Collection
+
+随着时间的推移，`DBMS` 需要移除那些可回收的 `physical version`，可回收的标准如下：
+
+- 没有活跃的事务能够看到那个版本
+- 该版本由已 `abort` 的事务创建
+
+我们需要解决的问题有两个：
+
+- 如何找到已过期的版本
+- 如何确定何时回收该版本是安全的
+
+![GarbageCollection](./img/GarbageCollection.png)
+
+我们回收的级别有两种：
+
+- 以 `tuple` 为单位，直接检查每个 `tuple` 去找到最老版本的 `tuple`，这里有两种不同的执行方式
+- 以 `txn` 为单位。每个事务会用 `read/write set` 来记录其读取和写入的对象。在事务结束时 `garbage collector` 可以去确认哪些对象是可以回收的
+
+![GarbageLevel](./img/GarbageLevel.png)
+
+#### Tuple Level
+
+`Garbage collector` 依次扫描 `tuple` 的不同版本，依据 `timestamp` 来确定该 `tuipe` 是否对于 `alive` 的事务是可见的
+
+![TupleLevel1](./img/TupleLevel1.png)
+
+![TupleLevel2](./img/TupleLevel2.png)
+
+当然，我们每次都扫描整个 `table` 中的所有 `tuple`，未免开销过大，因此这里我们可以引入一个 `bitmap` 来进行优化
+
+我们记录哪些从上次回收过以来，哪些 `tuple` 发生过改变，我们的 `garbage collector` 只需要扫描那些被更新过的 `tuple` 即可
+
+![TupleLevel3](./img/TupleLevel3.png)
+
+![TupleLevel4](./img/TupleLevel4.png)
+
+
+对于有索引 `index` 的情况（只有 `O2N` 才需要这么做），更新如下：
+
+![TupleLevel5](./img/TupleLevel5.png)
+
+![TupleLevel6](./img/TupleLevel6.png)
+
+#### Transaction Level
+
+核心思想如下：
+
+> 其实前面已经说过这玩意的核心思想了
+
+![TransactionLevel](./img/TranscationLevel.png)
+
+我们直接看例子：
+
+![TransactionLevel1](./img/TransactionLevel1.png)
+
+![TransactionLevel2](./img/TransactionLevel2.png)
+
+![TransactionLevel3](./img/TransactionLevel3.png)
+
+![TransactionLevel4](./img/TransactionLevel4.png)
+
+![TransactionLevel5](./img/TransactionLevel5.png)
+
+![TransactionLevel6](./img/TransactionLevel6.png)
+
+![TransactionLevel7](./img/TransactionLevel7.png)
+
+### Index Management
+
+主键 `primary key, pkey` 索引通常会指向 `version chain` 的头部，因此我们何时更新索引取决于 `tuple` 何时被新建。**对于主键索引，如果要更改的话，我们可以直接 `delete` 然后再 `insert`**，比较麻烦的是二级索引
+
+> 这里补充一点，索引的分类一般分成：
+>
+> - `clustered index`：聚簇索引。这会**实际改变 `tuple` 在物理上存储的顺序**，如果 `clustered index` 是作用在主键 `primary key` 上的，那么称为主键索引 `pkey index`。当然 `clustered index` 可以作用在任何 `key` 上
+>
+> - `non-clustered index`：非聚簇索引。这并不会改变 `tuple` 在物理上的存储。`non-clustered index` 也被称为 `secondary index`。它们通常是稠密的 `dense`，对于那些有重复元素的 `key`，需要使用 `bucket` 来作为中间层
+>
+> 这个部分参考 *`database system concepts`*
+
+![IndexManagement](./img/IndexManagement.png)
+
+对于 `secondary index` 而言，我们有两种方式进行修改：
+
+![SecondaryIndexManagement](./img/SecondaryIndexManagement.png)
+
+- `Logical Pointers`
+
+对于索引 `index` 而言（`clustered index` 和 `non-clustered index` 都是），我们是对某个（也可以多个） `attribute` 进行构建，在索引中，这个 `attribute` 被称为 `key`，索引中的 `value` 既可以是实际的 `tuple` 数据；也可以是 `tuple` 的 `record id, RID`
+
+对于 `secondary index` 而言，其 `value` 可以有两种选择（我们存储的都是该 `tuple` 的逻辑地址）：
+
+- 不存储实际的 `tuple`，存储 `primary key`，在需要的时候通过主键索引 `primary key index` 去找到对应的 `tuple`
+- 存储该 `tuple` 的 `ID`。注意这是 `tuple ID` 不是 `record id`
+
+无论是哪一种，我们都无法直接得到该 `tuple` 的数据，都需要去查一次索引或者表，我们称这个过程为**回表**
+
+![IndexPointers1](./img/IndexPointers1.png)
+
+- `Physical Pointers`
+
+我们在 `secondary index` 中存储该 `tuple` 的**物理地址**，那么这样子就不需要回表。但这么做也有问题。当 `tuple` 有新版本时，其物理地址必然发生改变，因此我们需要修改**所有**的 `secondary index`
+
+![IndexPointers2](./img/IndexPointers2.png)
+
+### MVCC Index
+
+`MVCC` 中的 `index` 要求如下：
+
+`index` 中通常不会存储该 `tuple` 版本信息，只会存储 `key` 和对应的 `value`（`value` 有两种形式）。`index` 中的 `key` 必须要支持重复，以便可以指向不同快照中的不同的逻辑版本
+
+![MVCCIndex](./img/MVCCIndex.png)
+
+举个重复 `key` 的例子：
+
+![MVCCIndexSample1](./img/MVCCindexSample1.png)
+
+![MVCCIndexSample2](./img/MVCCindexSample2.png)
+
+如果这个 `tuple` 发生了更新，我们并不会更新索引，因为这是 `O2N`
+
+![MVCCIndexSample3](./img/MVCCindexSample3.png)
+
+但当我们对该 `logical tuple` 进行插入的时候，我们需要对索引也同时进行插入。因此，我们说，索引实际上维护了不同数据库快照 `snapshot` 的不同 `logical tuple`
+
+![MVCCIndexSample4](./img/MVCCindexSample4.png)
+
+
+
+![MVCCIndexConclusion](./img/MVCCIndexConclusion.png)
+
+
+### Delete
+
+只有当 `logical tuple` 的所有版本都对任何事务不可见时，我们才会去删除其 `physical tuple`。其实删除就是前面讨论过的 `garbage collection`，只不过这里给出了具体删除的方法而已
+
+![MVCCDelete](./img/MVCCDelete.png)
+
+具体的方法有两种，由于这部分在 `lecture` 中并没有提及，因此我们看一下 `ppt` 就行了
+
+![MVCCDeleteApproach](./img/MVCCDeleteApproach.png)
+
+---
 
 
 
