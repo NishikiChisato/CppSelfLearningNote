@@ -81,6 +81,12 @@
       - [Group Commit](#group-commit)
     - [Logging Schemes](#logging-schemes)
     - [Checkpoints](#checkpoints)
+  - [Database Recovery](#database-recovery)
+    - [WAL Record](#wal-record)
+    - [Normal Execution](#normal-execution)
+      - [Transaction Commit](#transaction-commit)
+      - [Transaction Abort](#transaction-abort)
+    - [Fuzzy Checkpoints](#fuzzy-checkpoints)
 
 
 ## Concurrency Control Thery
@@ -1679,3 +1685,238 @@ Transactions failures occur when a transaction reaches an error and must be abor
 ![CheckpointChallenge](./img/CheckpointChallenge.png)
 
 ![CheckpointFrequency](./img/CheckpointFrequency.png)
+
+---
+
+## Database Recovery
+
+这个部分主要讨论如何对 `checkpoint` 进行优化以及如何从 `log` 中实现 `undo` 和 `redo` 操作
+
+![DatabaseRecovery](./img/DatabaseRecovery.png)
+
+我们主要介绍恢复算法： *ARIES* (**A**lgorithms for **R**ecovery and **I**solation **E**xploiting **S**emantics) 
+
+该算法有三个核心概念：
+
+- **Write Ahead Logging:** Any change is recorded in log on stable storage before the database change is written to disk (STEAL + NO-FORCE).
+- **Repeating History During Redo:** On restart, retrace actions and restore database to exact state before crash.
+- **Logging Changes During Undo:** Record undo actions to log to ensure action is not repeated in the event of repeated failures.
+
+翻译一下就是：
+
+- 在将 `dirty page` 写入到 `disk` 之前，我们需要先将 `log` 写入到 `disk` 
+- 通过 `redo` 操作，在崩溃回来时将系统恢复到崩溃前的状态
+- 对于还未提交的事务，需要对其执行撤销 `undo` 操作，我们需要用 `log` 记录这些撤销操作，这样当我们在 `recovery` 时如果系统再次发生崩溃，我们可以避免执行重复的操作
+
+### WAL Record
+
+除了前面我们讨论过的 `log` 中的内容，我们现在需要对其进行扩充。我们在此引入 `Log Sequence Number, LSN` 的概念。`LSN` 是一个**全局单调递增**的一个数字，因此我们可以用它来对不同的对象进行标识
+
+![WALRecord](./img/WALRecord.png)
+
+`LSN` 的分类如下：
+
+> 需要说明的是，由于 `LSN` 是一个全局的概念，因此这些分类只是 `LSN` 作用在不同的对象上面，它们的**来源**都是一样的。并且，`LSN` 用来标记 `log`，下面不同的分类本质上都是指向 `log` 的（把这些理解成指针）
+
+- `flushedLSN`：当前已经刷新到 `disk` 的 `log` 中的最后一个 `LSN`
+- `pageLSN`：该 `page` 最近一次更改的 `log` 的 `LSN`
+- `recLSN`：该 `page` 第一次变为 `dirty` 的 `log` 的 `LSN`
+- `lastLSN`：对于某个事务 $T_i$ 而言，其上次的 `log` 的 `LSN`
+- `MasterRecord`：`disk` 中最近一次 `checkpoint` 的 `LSN`
+
+![LSNClassification](./img/LSNClassification.png)
+
+当我们需要对某个 `dirty page` 写入到 `disk` 时，需要检查该 `page` 的 `pageLSN` 和当前的 `flushedLSN`，也就是需要满足：
+
+$$
+\text{pageLSN} \le \text{flushedLSN}
+$$
+
+这是因为我们需要保证当前 `page` 的 `log` 需要预先写入到 `disk` 中
+
+![WriteLogRecord](./img/WriteLogRecord.png)
+
+具体看下面这个例子：
+
+`log` 前面的数为 `LSN`，当然 `LSN` 也可以出现在其他地方（这里 `buffer pool` 的 `page` 中也是 `LSN`，不过叫 `pageLSN` 和 `recLSN`）
+
+![WriteLogRecordExample1](./img/WriteLogRecordExample1.png)
+
+`flushedLSN` 指向的是已经写入到 `disk` 中的 `log` 里面，最后的那个 `LSN`；而 `MasterRecord` 则是指向 `checkpoint` 的 `LSN`
+
+![WriteLogRecordExample2](./img/WriteLogRecordExample2.png)
+
+当 `buffer pool` 中的 `dirty page` 的 `pageLSN` 小于等于 `flushedLSN`，那么我们可以安全地将这个 `page` 写入到 `disk` 中
+
+![WriteLogRecordExample3](./img/WriteLogRecordExample3.png)
+
+当 `buffer pool` 中的 `dirty page` 的 `pageLSN` 大于 `flushedLSN`，那么我们不能将该 `dirty page` 写入 `disk`
+
+![WriteLogRecordExample4](./img/WriteLogRecordExample4.png)
+
+对于 `LSN` 的更新，则按照下面的规则：
+
+- 每次事务对该 `page` 进行修改时，都会产生一个 `log` 以及对应的 `LSN`，我们将 `pageLSN` 设置为该 `log` 的 `LSN`
+- 每次将 `WAL` 写入到 `disk` 时，我们都将 `flushedLSN` 更新为 `disk` 中最后的那个 `log` 的 `LSN`
+
+![UpdateLSN](./img/UpdateLSN.png)
+
+### Normal Execution
+
+下面我们开始讨论当事务正常执行时，`WAL` 需要做那些操作。在事务执行时，我们做出以下假设：
+
+![ExecutionAssumption](./img/ExecutionAssumption.png)
+
+#### Transaction Commit
+
+当事务提交时，`DBMS` 会向 `log` 中写入一个 `COMMIT` 标记，然后**将当前事务的所有 `log` 写入到 `disk` 中**
+
+当**提交成功**时（也就是这个事务的 `log` 安全地写入到了 `disk` 中），我们向 `log` 中写入一个 `TXN-END` 标记，表明当前事务所产生的 `log` 已经安全地存储在了 `disk` 中。当然，我们需要将 `TXN-END` 写入到 `disk` 中，但不需要立刻写入
+
+> 就算我们在这里引入了 `group commit`，也是只有在某个事务的 `log` 安全写入 `disk` 之后才会对内存中的 `log` 写入 `TXN-END` 标记
+
+![TransactionCommit](./img/TransactionCommit.png)
+
+结合下面的例子理解这个过程：
+
+`disk` 中的 `WAL` 为之前的 `log`
+
+![TransactionCommitExample1](./img/TransactionCommitExample1.png)
+
+当前事务 `commit` 时，我们会将这些 `log` 写入到 `disk` 中
+
+![TransactionCommitExample2](./img/TransactionCommitExample2.png)
+
+当这个事务的 `log` 全部写入到 `disk` 后，我们会加入一个 `TXN-END` 标签，表明该事务的 `log` 已经存储在 `disk` 中了，所以我们看到 $T_4$ 的 `TXN-END` 相较于 `COMMIT` 之间有一段距离
+
+![TransactionCommitExample3](./img/TransactionCommitExample3.png)
+
+在这之后，我们可以在内存中将 `TXN-END` 前面的 `log` 清除
+
+![TransactionCommitExample4](./img/TransactionCommitExample4.png)
+
+#### Transaction Abort
+
+下面我们来讨论事务 `abort` 时所需要做的操作
+
+由于在事务 `abort` 时，我们需要执行 `undo` 操作，也就是倒序遍历 `WAL`。因此，我们需要知道某个事务当前 `log` 的前一个 `log` 的 `LSN` 是什么
+
+需要说明的是，由于不同的事务之间是交叠 `interleaving` 运行的，因此上下相邻的两个 `log` 并不一定属于同一个事务。换句话说我们不能简单地认为当前 `log` 的前一条 `log` 就是这个事务的上一次操作
+
+我们在 `log` 中添加 `prevLSN`，用于记录当前事务的前一条 `log` 的 `LSN`。我们实际上是维护了一个链表来帮助我们快速遍历这个事务所进行过的操作
+
+![TransactionAbort](./img/TransactionAbort.png)
+
+引入 `prevLSN` 后，`WAL` 的情况如下：
+
+![TransactionAbortExample1](./img/TransactionAbortExample1.png)
+
+![TransactionAbortExample2](./img/TransactionAbortExample2.png)
+
+![TransactionAbortExample3](./img/TransactionAbortExample3.png)
+
+再次说明，在这个例子中，我们只有一个事务，因此上下两个 `log` 同属于一个事务，也就是 `prevLSN` 和 `LSN` 只相差 $1$，但在多个事务交叠执行时则不一定是这样
+
+在事务 `abort` 之后，我们需要进行 `undo` 操作，这种 `undo` 操作是直接写入到 `log` 中的。因为只要这个 `log` 写入到 `disk` 中，我们从上往下遍历 `WAL`，一旦我们遍历到该事务，那么：
+
+- 先执行该事务，执行了一半，然后发现这个事务 `abort`
+- 将执行的那一半 `undo`，然后正常遍历 `WAL`
+
+也就是下面我们将会讨论如何写入 `undo` 的 `log`
+
+在此我们引入 `Compensation Log Record, CLR`，其说明如下：
+
+- `CLR` 用于说明该如何 `undo` 对应的 `log`
+- `CLR` 具有所以需要 `undo` 的 `log` 的全部数据，然后再加上 `undoNext` 指针（用于指向下一个 `undo` 的 `LSN`）
+- 当 `CLR` 被添加到 `WAL` 中时，`DBMS` 会立即向应用程序说明该事务已终止，而不会等待 `CLR` 刷新到 `disk` 之后再说明
+
+![CompensationLogRecord](./img/CompensationLogRecord.png)
+
+我们结合下面这个例子进行理解：
+
+![CLRExample1](./img/CLRExample1.png)
+
+`CLR-002` 说明当前 `CLR` 是为了回滚 `LSN` 为 `002` 的 `log` 
+
+![CLRExample2](./img/CLRExample2.png)
+
+`CLR` 的 `before value` 和 `after value` 于原先的 `log` 相反，这样当我们 `redo` 这条语句时便可以实现 `undo`
+
+![CLRExample3](./img/CLRExample3.png)
+
+`undoNext` 用于指向下一条需要 `undo` 的 `log`
+
+![CLRExample4](./img/CLRExample4.png)
+
+![CLRExample5](./img/CLRExample5.png)
+
+关于如何 `abort algorithm`，说明如下：
+
+- 首先写入当前事务的 `ABORT` 标签到 `log` 中
+- 然后我们倒序遍历 `log`，对于每一个更新操作，我们都添加一条 `CLR` 并将原先的值恢复
+- 最后，向 `log` 中写入 `TXN-END`
+
+![AbortAlgorithm](./img/AbortAlgorithm.png)
+
+### Fuzzy Checkpoints
+
+由于我们需要定时写入 `checkpoints`，每当我们在 `log` 中加入一个 `checkpoints` 时，经历的步骤如下：
+
+- 暂停所有新事务的执行
+- 对于还未执行完毕的事务，将其执行完毕
+- 将所有的 `log` 和 `dirty page` 刷新到 `disk` 中
+
+由于在加入 `checkpoint` 后我们必须要暂停事务的执行，直到那些未执行完闭的事务执行完毕。那么假设某个事务会执行很长时间，那么我们的系统就会被迫暂停同样长的时间，这并不是我们希望看到的
+
+![CheckpointIssue](./img/CheckpointIssue.png)
+
+一个稍微好一点的策略 `slightly better checkpoint` 是，我们只暂停那些写入的事务，对于读取的事务则正常执行（通过停止获取 `write latch` 来实现），也就是下面这个例子：
+
+在下图中，我们有两个线程： `checkpoint` 和 `transaction`
+
+![SlightlyBetterExample1](./img/SlightlyBetterExample1.png)
+
+当事务对 `page 3` 做出更改后，`checkpoint` 被加入到 `log` 中并对所有的 `dirty page` 进行刷新。这个时候我们会暂停写入事务的执行
+
+![SlightlyBetterExample2](./img/SlightlyBetterExample2.png)
+
+![SlightlyBetterExample3](./img/SlightlyBetterExample3.png)
+
+当所有的 `dirty page` 刷新到 `disk` 之后，写入事务再次启动，这时它对 `page 1` 进行了写入，而 `page 1` 并没有被刷新到 `disk` 中。此时，**在 `disk` 中的数据处于 `inconsistency` 的状态**
+
+为了解决这个问题，我们需要在 `checkpoint` 开始时维护两个 `table`：
+
+- `Active Transaction Table (ATT)`：用于记录所有 `active txn`
+- `Dirty Page Table (DPT)`：用于记录所有的 `dirty page`
+
+![SlightlyBetterExample4](./img/SlightlyBetterExample4.png)
+
+对于 `ATT` 中的每个 `active txn`，我们记录以下三个变量：
+
+- `txnId`：该事务的标识符
+- `status`：当前事务的状态
+  - `R`：正在运行
+  - `C`：已提交（指其 `log` 已在 `disk` 中，也就是写入了 `TXN-END`）
+  - `U`：还未提交（也就是当前事务将会被撤销）
+- `lastLSN`：当前事务所创建的上一个 `LSN`
+
+![ATT](./img/ATT.png)
+
+对于 `DPT` 中的每个 `dirty page`，我们只记录其 `recLSN`。表示将该 `page` 第一次变为 `dirty` 的那个 `log` 的 `LSN`
+
+![DPT](./img/DPT.png)
+
+在我们引入了 `ATT` 和 `DPT` 后，`Slightly Better Checkpoints` 的过程如下：
+
+需要说明一点，$T_2$ 提交之后，由于没用写入 `TXN-END`，也就说明 $T_2$ 的 `log` 还没有全部安全写入到 `disk` 中，因此 $T_2$ 会出现在 `ATT` 中
+
+![SlightlyBetterCheckpoint](./img/SlightlyBetterCheckpoint.png)
+
+这依旧是有问题的，因为我们还是不得不暂停写入事务的执行
+
+
+
+
+
+
+
