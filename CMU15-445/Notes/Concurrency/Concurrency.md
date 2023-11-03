@@ -77,6 +77,10 @@
       - [Force Policy](#force-policy)
     - [Shadow Paging](#shadow-paging)
       - [Sqlite Example](#sqlite-example)
+    - [Write Ahead Log (WAL)](#write-ahead-log-wal)
+      - [Group Commit](#group-commit)
+    - [Logging Schemes](#logging-schemes)
+    - [Checkpoints](#checkpoints)
 
 
 ## Concurrency Control Thery
@@ -1166,6 +1170,8 @@ $T_1$ 先于 $T_2$ 执行，因此前者的 `timestamp` 比后者小，我们最
 
 我们在 `table` 中只存储最新版本，将旧版本存储在 `time-travel table` 中，并用 `version chain` 来将这些不同的 `physical tuple` 构建起来 
 
+我们会将当前的版本复制到 `time-travel table`，然后将更新覆盖到当前的版本中
+
 ![TimeTravel](./img/TimeTravel.png)
 
 #### Delta Storage
@@ -1523,7 +1529,153 @@ Transactions failures occur when a transaction reaches an error and must be abor
 
 ![SqliteExample6](./img/SqliteExample6.png)
 
+### Write Ahead Log (WAL)
 
+`Shadow Page` 对磁盘的写入为 `random I/O`，我们需要一种能够将 `random I/O` 转换成 `sequential I/O` 的方式
 
+![ShadowPageIssue](./img/ShadowPageIssue.png)
 
+我们单独维护一个 `log file`，用于记录每个事务对数据库对象所做出的修改，我们可以依据这些 `log` 来实现 `undo` 和 `redo`，这里有两个基本要求：
 
+- `log` 存储在 `stable storage` 中，也就是它不会因为崩溃而消失
+- `log` 当中存储的信息足够我们实现 `undo` 和 `redo`
+
+与前面不同的是，这里要求 `buffer pool policies` 为 `Steal + No-force`。`Steal` 是为了让我们将未提交的事务做出的修改也能写入 `disk`，`No-force` 是为了让我们先将 `log` 写入 `disk`，然后再将事务做出的修改写入到 `disk` 中
+
+这种方式被称为 `Write Ahead Log, WAL`
+
+![WriteAheadLog](./img/WriteAheadLog.png)
+
+`WAL` 协议的内容如下：
+
+- `DBMS` 会先将事务的 `log` 存放在 `non-volatile storage` 的 `page` 中（也就是存放在内存中）
+- 所有的 `log page` 都会在实际对 `disk` 中的页面修改之前被写入 `disk`
+- 直到所有的 `log` 被写入 `disk` 时，我们才认为该事务已经提交，尽管它本身的修改并没有作用在 `disk` 上
+
+![WALProtocol](./img/WALProtocol.png)
+
+我们用 `<BEGIN>` 和 `<COMMIT>` 来标记一个 `log` 的开始和结束
+
+![WALTag](./img/WALTag.png)
+
+`WAL` 中需要包含以下信息：
+
+- `Object ID` 为该对象在数据库内的 `ID`
+- `Before Value` 为该对象修改前的值，用于实现 `undo`
+- `After Value` 为该对象修改后的值，用于实现 `redo`
+
+如果使用 `MVCC` 使用 `append-only` 来实现，那么就不需要存储 `before value`，因为每当我们对某个对象进行修改时，我们**总是在物理上创建一个新的对象**，而 `delta storage` 则需要这个对象的 `before value` 来帮助实现 `undo`（`time-travel` 我认为也不需要这个 `before value`，但 `lecture` 中没有说明）
+
+![WALContent](./img/WALContent.png)
+
+下面给出了 `WAL` 的工作过程：
+
+在事务的 `BEGIN` 和 `COMMIT` 时，都需要对 `log` 也同步写入 `<BEGIN>` 和 `<COMMIT>`
+
+![WALExample1](./img/WALExample1.png)
+
+![WALExample2](./img/WALExample2.png)
+
+在对事务的更改写入 `disk` 时，我们要优先把 `log` 写入到 `disk` 中。当 `log` 已经写入到 `disk` 时，我们认为该事务已提交，哪怕它实际还没有修改 `disk`
+
+如果在事务修改 `disk` 中的对象时，发生了崩溃，这个时候由于 `log` 已经提前写入到 `disk` 中，因此我们可以很轻易地实现 `undo` 和 `redo`
+
+![WALExample3](./img/WALExample3.png)
+
+#### Group Commit
+
+每个事务提交时我们将 `log` 写入到 `disk` 效率并不高，我们可以将**一组**事务的 `log` 一起写入到 `disk` 中
+
+![WALGroupCommit](./img/WALGroupCommit.png)
+
+在引入 `group commit` 后，其工作流程如下：
+
+![WALGroupExample1](./img/WALGroupExample1.png)
+
+![WALGroupExample2](./img/WALGroupExample2.png)
+
+当一个 `page` 满的时候，我们需要对 `log` 进行写入
+
+![WALGroupExample3](./img/WALGroupExample3.png)
+
+或者，我们可以设置一段时间之后将 `log` 进行写入
+
+![WALGroupExample4](./img/WALGroupExample4.png)
+
+关于底层的 `buffer pool policies`，有如下两种选择：
+
+- 对于 `Steal + No-force`，可以获得较快的 `runtime performance`，但 `recovery performance` 则较慢。因为 `recovery` 时需要 `undo` 和 `redo` 操作
+- 对于`No-steal + Force`，可以获得更快的 `recovery performance`，但 `runtime performance` 则较慢。因为在 `recovery` 时不需要 `undo` 和 `redo` 操作
+
+![BufferPoolPolicy](./img/BufferPoolPolicy.png)
+
+### Logging Schemes
+
+`log record` 的内容有以下三种分类，由于 `notes` 中更加详细，因此这里直接给出 `notes` 的原文：
+
+> **Physical Logging:**
+> 
+> - Record the byte-level changes made to a specific location in the database.
+> - Example: git diff
+> 
+> **Logical Logging:**
+> 
+> - Record the high level operations executed by transactions.
+> 
+> - Not necessarily restricted to a single page.
+> 
+> - Requires less data written in each log record than physical logging because each record can update multiple tuples over multiple pages. However, it is difficult to implement recovery with logical logging when there are concurrent transactions in a non-deterministic concurrency control scheme. Additionally recovery takes longer because you must re-execute every transaction.
+> - Example: The UPDATE, DELETE, and INSERT queries invoked by a transaction.
+> 
+> **Physiological Logging:**
+> 
+> - Hybrid approach where log records target a single page but does not specify data organization of the page. That is, identify tuples based on a slot number in the page without specifying exactly where in the page the change is located. Therefore the DBMS can reorganize pages after a log record has been written to disk.
+> 
+> - Most common approach used in DBMSs.
+
+![LoggingScheme](./img/LoggingScheme.png)
+
+优缺点如下：
+
+![PhysicalLogicalLog](./img/PhysicalLogicalLog.png)
+
+对于 `Log-Structured` 系统，其本身对于对象的修改都是存储 `log`，但我们依旧会存储 `WAL`，因此这算是 `redundent`
+
+![LogStructured](./img/LogStructured.png)
+
+### Checkpoints
+
+在我们引入 `group commit` 后（哪怕我们不引入），只要一直有事务运行，那么 `WAL` 便会**在内存中**永远增加，因此我们需要定期将其写入到 `disk` 中。我们通过引入 `checkpoint` 来将这之前的 `log` 写入到 `disk` 中。这同时也可以提示我们恢复时要从哪里开始恢复
+
+恢复时，我们只会去恢复 `disk` 中的 `log`，对于那些在内存中还未写入 `disk` 的 `log`，遗失了也不会出问题。这相当于这部分的操作还没用作用在 `disk` 中的对象上，我们去遍历那些已经在 `disk` 中的 `log`，并对不同的事务执行 `undo` 和 `redo` 操作即可保证数据库的 `A, C, D`
+
+- 对于那些 `log` 已写入 `disk` 但事务本身的更改还未写入 `disk` 的事务（也就是事务本身已提交），我们对其执行 `redo`
+- 对于那些只写入了部分 `log` 到 `disk` 但事务本身还未提交的事务，我们对其执行 `undo`
+
+![CheckPointsIntro](./img/CheckPointsIntro.png)
+
+具体的做法如下：
+
+![CheckpointsProtocol](./img/CheckpointsProtocol.png)
+
+举个例子：
+
+我们会将 `checkpoint` 前面的 `log` 写入到 `disk`
+
+![CheckpointExample1](./img/CheckpointExample1.png)
+
+![CheckpointExample2](./img/CheckpointExample2.png)
+
+由于崩溃发生时，$T_2$ 已已提交，$T_3$ 未提交，因此我们会对 $T_2$ 执行 `redo`，$T_3$ 执行 `undo`
+
+![CheckpointExample3](./img/CheckpointExample3.png)
+
+`Checkpoint` 也会有一些问题：
+
+- 在我们加入 `checkpoint entry` 时，需要暂停事务的运行
+- 我们需要重头遍历所有的 `log`，这会造成很大的性能开销（`checkpoint` 当前的作用仅仅是说明我们需要将 `log` 写入到 `disk` 中）
+- 插入 `checkpoint entry` 的频率。频率过高会影响 `runtime performance`，频率过低则需要在恢复时遍历大量的 `log`
+
+![CheckpointChallenge](./img/CheckpointChallenge.png)
+
+![CheckpointFrequency](./img/CheckpointFrequency.png)
