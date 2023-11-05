@@ -87,6 +87,14 @@
       - [Transaction Commit](#transaction-commit)
       - [Transaction Abort](#transaction-abort)
     - [Fuzzy Checkpoints](#fuzzy-checkpoints)
+      - [Intro](#intro-1)
+      - [Concept](#concept-3)
+      - [ARIES - Recovery Phase](#aries---recovery-phase)
+        - [Analysis Phase](#analysis-phase)
+        - [Redo Phase](#redo-phase)
+        - [Undo Phase](#undo-phase)
+      - [Full Example](#full-example)
+      - [Conclusion](#conclusion-1)
 
 
 ## Concurrency Control Thery
@@ -1860,6 +1868,8 @@ $$
 
 ### Fuzzy Checkpoints
 
+#### Intro
+
 由于我们需要定时写入 `checkpoints`，每当我们在 `log` 中加入一个 `checkpoints` 时，经历的步骤如下：
 
 - 暂停所有新事务的执行
@@ -1914,9 +1924,142 @@ $$
 
 这依旧是有问题的，因为我们还是不得不暂停写入事务的执行
 
+#### Concept
 
+最后，我们给出 `Fuzzy Checkpoints` 来解决这个问题
 
+![FuzzyCheckpoints](./img/FuzzyCheckpoints.png)
 
+`Fuzzy Checkpoints` 不会阻碍写入事务的执行。我们将 `checkpoint` 从一个点扩大到一个区域，分别用以下两个标记进行标识：
 
+- `CHECKPOINT-BEGIN`：标记 `checkpoint` 的开始
+- `CHECKPOINT-END`：标记 `checkpoint` 的结束，并且需要携带 `ATT` 和 `DPT`
 
+![FuzzyCheckpointConcept](./img/FuzzyCheckpointConcept.png)
 
+需要说明的是，这里的 `ATT` 和 `DPT` 不会记录两个 `checkpoint` 标记之间的事务。只会记录 `CHECKPOINT-BEGIN` 之前的事务
+
+并且当 `CHECKPOINT-END` 完成时，我们会将 `MasterRecord` 更新为 `CHECKPOINT-BEGIN` 的 `LSN`。换句话说，当我们崩溃回来之后会直接从 `MasterRecord` 处开始进行检查（也就是后面的 `analysis` 的部分），而这里的 `ATT` 和 `DPT` 则是提示我们当前 `CHECKPOINT-BEGIN` 上面还有一些未完成的事务等待我们去进行 `redo` 或 `undo`
+
+#### ARIES - Recovery Phase
+
+当我们发生崩溃回来时，执行如下三个操作（这里我们直接给出原文）：
+
+> **Analysis Phase**
+> 
+> Start from last checkpoint found via the database’s *MasterRecord LSN*.
+> 
+> 1. Scan log forward from the checkpoint.
+> 2. If the DBMS finds a `TXN-END` record, remove its transaction from `ATT`.
+> 3. All other records, add transaction to `ATT` with status *UNDO*. And on commit, change transaction status to *COMMIT*.
+> 4. For UPDATE log records, if page $P$ is not in the `DPT`, then add $P$ to `DPT` and set $P$’s *recLSN* to the log record’s LSN.
+> 
+> **Redo Phase**
+> 
+> **The goal of this phase is for the DBMS to repeat history to reconstruct its state up to the moment of the crash**. It will reapply all updates (even aborted transactions) and redo CLRs. The DBMS scans forward from log record containing smallest *recLSN* in the `DPT`. For each update log record or CLR with a given LSN, the DBMS re-applies the update unless:
+> 
+> - **Affected page** is not in the `DPT`, or
+> - **Affected page** is in `DPT` but that record’s LSN is less than the *recLSN* of the page in `DPT`, or
+> - **Affected pageLSN** (on disk) $\ge$ LSN.
+> 
+> To redo an action, the DBMS re-applies the change in the log record and then sets the affected page’s pageLSN to that log record’s LSN. At the end of the redo phase, write `TXN-END` log records for all transactions with status *COMMIT* and remove them from the `ATT`.
+> 
+> **Undo Phase**
+> 
+> In the last phase, the DBMS reverses all transactions that were active at the time of crash. These are all transactions with *UNDO* status in the `ATT` after the Analysis phase. The DBMS processes transactions in reverse LSN order using the lastLSN to speed up traversal. As it reverses the updates of a transaction, the DBMS writes a CLR entry to the log for each modification. Once the last transaction has been successfully aborted, the DBMS flushes out the log and then is ready to start processing new transactions.
+
+- `Analysis`：从 `MasterRecord` 开始**向下**进行检查，不断**构建** `ATT` 和 `DPT`
+  - 从 `MasterRecord` 指向的 `log` 处开始向下扫描
+  - 对于每个 `txn`，如果遇到 `TXN-END` 则将其从 `ATT` 中删除；否则，将其加入 `ATT` 中，并将其 `status` 设置为 *UNDO*（默认），或者是 *COMMIT*（已提交）
+  - 对于每个更新事务中的 `page`，如果该 `page` 不在 `DPT`，则将其加入 `DPT` 并将该 `page` 的 `recLSN` 设置为 `log` 的 `LSN`。表明这是该 `page` 第一次变为 `dirty`
+- `Redo`：从 `DPT` 中**最早**被更改的 `page` 开始，重新执行 `WAL` 中的操作（那些被 `abort` 的事务的操作也需要执行）
+  - 从 `DPT` 中最小的 `recLSN` 所指向的 `log` 开始向下扫描。也就是从第一个未被写入 `disk` 的 `page` 开始扫描
+  - 我们重新执行这些 `log`，除非以下两种情况：
+    - **这条 `log` 所影响的 `page`** 不在 `DPT` 中
+    - **这条 `log` 所影响的 `page`** 在 `DPT` 中，但是该 `log` 对应的 `LSN` 小于该 `page` 的 `recLSN`。这说明之前对该 `page` 的写入已经写入 `disk` 中，这才会有 `recLSN` 大于该 `log` 的 `LSN`
+  - 在 `redo phase` 的结尾，我们需要对所有提交的事务都写入 `TXN-END`，然后将其从 `ATT` 中删除。就跟我们正常执行该事务一样，只不过我们不需要将该事务所造成的影响写入 `disk`
+- `Undo`：对那些被 `abort` 的事务（既有系统 `abort` 也有因崩溃而 `abort`）的操作进行撤销，也就是**向 `WAL` 中写入 `CLR`**并将 `WAL` 写入 `disk`
+
+![RecoveryPhase](./img/RecoveryPhase.png)
+
+下图中很好的描述了不同阶段的起点，实际上也就是我们上面所描述的那样
+
+![ARIES](./img/ARIES.png)
+
+下面我们直接给出三个阶段的具体描述，我们上面已经重复过了，在此不做过多说明
+
+##### Analysis Phase
+
+![AnalysisPhase1](./img/AnalysisPhase1.png)
+
+![AnalysisPhase2](./img/AnalysisPhase2.png)
+
+下面我们直接看例子：
+
+![AnalysisPhaseExample1](./img/AnalysisPhaseExample1.png)
+
+![AnalysisPhaseExample2](./img/AnalysisPhaseExample2.png)
+
+![AnalysisPhaseExample3](./img/AnalysisPhaseExample3.png)
+
+![AnalysisPhaseExample4](./img/AnalysisPhaseExample4.png)
+
+##### Redo Phase
+
+![RedoPhase1](./img/RedoPhase1.png)
+
+![RedoPhase2](./img/RedoPhase2.png)
+
+![RedoPhase3](./img/RedoPhase3.png)
+
+##### Undo Phase
+
+对于 `ATT` 中的每个未提交的事务，我们都倒序遍历 `WAL` 并对其写入 `CLR`，也就是我们像先前 `undo` 一个事务一样
+
+![UndoPhase](./img/UndoPhase.png)
+
+#### Full Example
+
+我们来看一个完整的例子：
+
+当 $T_1$ `abort` 时，我们在 `WAL` 中写入 `CRL`，这就是正常事务 `abort` 的情况
+
+![FullExample1](./img/FullExample1.png)
+
+![FullExample2](./img/FullExample2.png)
+
+当崩溃发生时，我们需要依据 `ATT` 和 `DPT` 中的数据来执行 `redo` 和 `undo`（`ATT` 和 `DPT` 预先由 `analysis phase` 得到）
+
+由于 $T_2$ 和 $T_3$ 只执行了一半的时候崩溃发生了，因此我们需要对这两个事务进行 `undo`
+
+![FullExample3](./img/FullExample3.png)
+
+![FullExample4](./img/FullExample4.png)
+
+![FullExample5](./img/FullExample5.png)
+
+当我们在 `recovery` 的时候，如果再次发生崩溃，由于我们的 `WAL` 是在 `disk` 上面的，因此我们再次从 `disk` 中读取然后重新执行一遍即可，崩溃对我们不会造成什么影响
+
+![FullExample6](./img/FullExample6.png)
+
+我们崩溃回来后，只剩下 $T_2$ 还没用撤销，因此使用 `CLR` 对 $T_2$ 进行撤销
+
+![FullExample7](./img/FullExample7.png)
+
+有关于崩溃相关的问题，`lecture` 中给出了四个回答：
+
+![CrashIssue1](./img/CrashIssue1.png)
+
+在 `redo` 阶段，我们可以在后台异步将新产生的 `WAL` 写入 `disk` 中
+
+在 `undo` 阶段，我们可以延后一个 `page` 的 `rollback` 直到它被访问为止；或者我们可以修改应用程序的逻辑来避免长时间的事务（一般不会这样）
+
+![CrashIssue2](./img/CrashIssue2.png)
+
+#### Conclusion 
+
+总结如下：
+
+我们在 `buffer pool` 使用 `Steal` 是为了能够将运行到一半的事务所造成的修改也写入 `disk`，使用 `No-force` 是为了保证 `log` 能够先于事务的更改写入 `disk` 中
+
+![Conclusion](./img/Conclusion.png)
