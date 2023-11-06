@@ -1056,9 +1056,13 @@ $T_1$ 先于 $T_2$ 执行，因此前者的 `timestamp` 比后者小，我们最
 不同的 `isolation level` 中可能出现的问题如下：
 
 > **Isolation Levels (Strongest to Weakest)**:
+>
 > 1. SERIALIZABLE: No Phantoms, all reads repeatable, and no dirty reads.
+>
 > 2. REPEATABLE READS: Phantoms may happen.
+>
 > 3. READ-COMMITTED: Phantoms and unrepeatable reads may happen.
+>
 > 4. READ-UNCOMMITTED: All anomalies may happen.
 
 ![IsolationLevels](./img/IsolationLevels.png)
