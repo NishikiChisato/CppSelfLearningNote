@@ -242,6 +242,8 @@ TRANSACTION STATE UPDATE
 
 - 在 `deadlock detection` 函数中，我们不能对 `lock request queue` 中的项进行删除，只能简单地将对应的事务的状态置为 `ABORTED`，然后对所有的事务执行 `notify_all`
 
+我们不能对事务 `txn` 进行加锁和解锁
+
 
 
 
