@@ -240,3 +240,8 @@ so forth - 以此类推
 intitutively - 直觉上来说
 
 likewise - 同样的
+
+raisons d'etre - 存在理由
+
+conceive - 构想
+
