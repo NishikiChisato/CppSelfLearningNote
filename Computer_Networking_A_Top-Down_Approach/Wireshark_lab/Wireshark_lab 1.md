@@ -19,7 +19,7 @@
 
 下载 `Wireshark` 之后，进入主界面：
 
-![Wireshark_lab 1.1](../img/Wireshark_lab1.1.png)
+![Wireshark_lab 1.1](./img/Wireshark_lab1.1.png)
 
 在 `应用显示过滤器` 部分，可以对接收到的分组进行过滤
 
@@ -31,7 +31,7 @@
 
 返回 `Wireshark` ，在 `应用显示过滤器` 部分输入 `http`，此时便显示：
 
-![Wireshark_lab1.2](../img/Wireshark_lab1.2.png)
+![Wireshark_lab1.2](./img/Wireshark_lab1.2.png)
 
 可以看到，此时进行了一来一回两次操作，目标 `IP` 为 `128.119.245.12`
 
@@ -41,4 +41,4 @@
 
 下面的两个窗口则是显示一些具体的信息，**左边为数据包的详细信息**，**右边为数据包内容的十六进制和 `ASCII` 显示**
 
-![Wireshark_lab1.3](../img/Wireshark_lab1.3.png)
+![Wireshark_lab1.3](./img/Wireshark_lab1.3.png)

@@ -27,7 +27,7 @@
 
 我们在浏览器输入 [http://gaia.cs.umass.edu/wireshark-labs/HTTP-wireshark-file1.html](http://gaia.cs.umass.edu/wireshark-labs/HTTP-wireshark-file1.html)，利用 `Wireshark` 抓包，得到如下结果（请求报文）：
 
-![Wireshark_lab2.1](../img/Wireshark_lab2.1.png)
+![Wireshark_lab2.1](./img/Wireshark_lab2.1.png)
 
 可以看到，在我们浏览器发出 `GET` 请求后，经过 $0.3$ 秒得到了 `200 OK` 的响应
 
@@ -43,7 +43,7 @@
 
 具体结果如下（响应报文）：
 
-![Wireshark_lab2.2](../img/Wireshark_lab2.2.png)
+![Wireshark_lab2.2](./img/Wireshark_lab2.2.png)
 
 因此：
 
@@ -75,7 +75,7 @@
 >
 >重启浏览器。
 
-![Wireshark_lab2.3](../img/Wireshark_lab2.3.png)
+![Wireshark_lab2.3](./img/Wireshark_lab2.3.png)
 
 该实验需要我们回答以下问题：
 
@@ -86,19 +86,19 @@
 
 第一次 `HTTP` 的请求报文结果如下：
 
-![Wireshark_lab2.4](../img/Wireshark_lab2.4.png)
+![Wireshark_lab2.4](./img/Wireshark_lab2.4.png)
 
 并没有看到 `IF-MODIFIED-SINCE` 字段
 
 第一次返回的结果如下：
 
-![Wireshark_lab2.5](../img/Wireshark_lab2.5.png)
+![Wireshark_lab2.5](./img/Wireshark_lab2.5.png)
 
 `HTTP` 的返回内容包含在 `content` 中，返回的是明文，并不是文件
 
 第二次请求报文结果如下：
 
-![Wireshark_lab2.6](../img/Wireshark_lab2.6.png)
+![Wireshark_lab2.6](./img/Wireshark_lab2.6.png)
 
 我们可以看到有 `IF_MODIFIED_SINCE` 字段，与第一次返回的 `Last-Modified` 字段中的值一致
 
@@ -110,7 +110,7 @@
 
 我们将缓存清空后，在浏览器输入 [http://gaia.cs.umass.edu/wireshark-labs/HTTP-wireshark-file3.html](http://gaia.cs.umass.edu/wireshark-labs/HTTP-wireshark-file3.html)，得到如下结果：
 
-![Wireshark_lab2.7](../img/Wireshark_lab2.7.png)
+![Wireshark_lab2.7](./img/Wireshark_lab2.7.png)
 
 我们需要回答以下问题：
 
@@ -122,13 +122,13 @@ with the response to the HTTP GET request?
 
 我们浏览器只发送了一个 `HTTP` 请求报文，哪怕这是大文件，包含 `Bill or Rights` 的截图如下：
 
-![Wireshark_lab2.8](../img/Wireshark_lab2.8.png)
+![Wireshark_lab2.8](./img/Wireshark_lab2.8.png)
 
 对应的分组号为 `1525`
 
 包含 `status code` 和 `pharse` 的分组号为 `1525`，分别是 `200 OK`
 
-![Wireshark_lab2.9](../img/Wireshark_lab2.9.png)
+![Wireshark_lab2.9](./img/Wireshark_lab2.9.png)
 
 一个发送了 `4` 个 `TCP segments`，**一个 `TCP segments` 最多只能携带 `1448 Bytes`**
 
@@ -140,7 +140,7 @@ with the response to the HTTP GET request?
 
 这是一个 `base HTML` 文件，该文件中包含两张图片，**两张图片以 `URL` 的形式嵌入 `base HTML` 文件中**，我们得到如下结果
 
-![Wireshark_lab2.10](../img/Wireshark_lab2.10.png)
+![Wireshark_lab2.10](./img/Wireshark_lab2.10.png)
 
 我们需要回答以下问题：
 
@@ -161,7 +161,7 @@ with the response to the HTTP GET request?
 
 报文情况如下：
 
-![Wireshark_lab2.12](../img/Wireshark_lab2.12.png)
+![Wireshark_lab2.12](./img/Wireshark_lab2.12.png)
 
 可以看到我们浏览器首先发送一个 `GET` 请求，随后收到 `401 Unauthorized` 的报文。之后我们浏览器再次发送 `GET` 请求，此次请求头带有 `Authorization` 字段，用于表示用户名与密码，之后再次收到带有内容的响应报文，完成请求
 
