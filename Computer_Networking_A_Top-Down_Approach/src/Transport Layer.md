@@ -12,6 +12,7 @@
       - [rdt2.2](#rdt22)
     - [rdt3.0](#rdt30)
   - [RDT with Pipelining](#rdt-with-pipelining)
+    - [Go-Back-N (GBN)](#go-back-n-gbn)
 
 ## Multiplexing & Demultiplexing
 
@@ -141,6 +142,38 @@ The following figure shows how rdt3.0 operates in different scenario:
 
 ## RDT with Pipelining
 
+The utilization of stop-and-wait is limited since it involves a small amount of acitvity. To address this issue, we can introduce *pipelining* technique into stop-and-wait protocol. There are two additional requirement should be satified:
+
+- The range of sequence number should be increased ,as there are multiple, in-transmit and unacknowledged packets in intermediate channel. Each packet therefore must have unique sequence number.
+- The sender and receiver should buffer packets to be sent and packets that have been received, respectively. Minimally, the sender must have a buffer for those packets that have been sent but not acknowledged.
+
+There are two ways to implement a pipeline: **Go-Back-N (GBN)** and **Selective Repeat (SR)**. The distinction between them lies in whether the receiver have a buffer for those out-of-order packet.
+
+### Go-Back-N (GBN)
+
+The sender is allowed to transmit multiple packets without waiting for acknowledgement, but is constrained to fewer then a given maximum number, $N$, which is the size of sending window. 
+
+We define $base$ to be the sequence number of oldest unacknowledged packet and $nextseqnum$ to be the smallest unused sequence number(that is, the sequence number of next packet to be sent), then four intervals in the range of sequence numbers can be identified. 
+
+Sequence numbers in the interval $[0,base-1]$ correspond to packets that have already been transmitted and acknowledged. The interval $[base,nextseqnum-1]$ corresponds to packets that have been sent but not yet acknowledged. Sequence numbers in the interval $[nextseqnum,base+N-1]$ can be used for packets that can be sent immediately, should data arrive from the upper layer. Finally, sequence numbers greater than or equal to $base+N$ cannot be used until an unacknowledged packet currently in the pipeline (specifically, the packet with sequence number $base$) has been acknowledged.
+
+The range of sequence number of transmitted but not acknowledged packets can be viewd as a window of size $N$, as the following figure shown:
+
+![GBNWindow](./img/GBNWindow.png)
+
+As the protocol operates, the window slides forward over the range of sequence numbers, so this protocol is usually referred to as **sliding-window protocol**.
+
+FSM:
+
+![GBNSender](./img/GBNSender.png)
+
+The $base$ is always set to the current sequence number in ACK. Therefore, for certain packet that is correctly received but its corresponding ACK is lost, as long as the larger sequence number in ACK arrives, the $base$ would jump to those sequence numbers that are correctly received but have lost their corresponding ACK is lost. 
+
+![GBNReceiver](./img/GBNReceiver.png)
+
+For the action taken by the initial state, `sndpkt=make_pkt(0,ACK,checksum)`, only create this packet without actually sending it.
+
+If receiver correctly receives an out-of-order packet, it would directly discard this packet. The receiver only accepts packets with sequence number equal to $expectedseqnum$. 
 
 
 
