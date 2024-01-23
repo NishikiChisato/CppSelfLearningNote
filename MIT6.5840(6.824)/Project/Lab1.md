@@ -1,14 +1,14 @@
 # Lab 1
 
 - [Lab 1](#lab-1)
-  - [Prerequesite](#prerequesite)
+  - [Prerequisite](#prerequisite)
   - [Design \& Implementation](#design--implementation)
     - [Worker Actions](#worker-actions)
     - [Coordinator Actions](#coordinator-actions)
     - [Architecture](#architecture)
 
 
-## Prerequesite
+## Prerequisite
 
 在具体开始写代码之前需要先将官方提供的 [实验文档](https://pdos.csail.mit.edu/6.824/labs/lab-mr.html) 全部认真看一遍，除此之外还需要详细理解 [`MapReduce`](https://pdos.csail.mit.edu/6.824/papers/mapreduce.pdf) 的原理，否者这个实验无法进行下去
 
