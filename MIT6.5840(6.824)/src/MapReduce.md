@@ -19,7 +19,7 @@
 
 ## Structure
 
-![MapReduceFramework](../img/MapReduceFramework.png)
+![MapReduceFramework](./img/MapReduceFramework.png)
 
 ## Concepts
 
