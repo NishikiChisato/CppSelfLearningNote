@@ -3,6 +3,9 @@
 - [Raft](#raft)
   - [Replicated state machine \& Raft Properties](#replicated-state-machine--raft-properties)
   - [Raft Basics](#raft-basics)
+  - [Raft Principle](#raft-principle)
+    - [Leader Election](#leader-election)
+    - [Log Replication](#log-replication)
 
 
 In this article, I will share my Interpretation of the [Raft Paper](https://raft.github.io/raft.pdf). Before delving into the details, it is beneficial to take a brief look at this [virtualization guide](http://thesecretlivesofdata.com/raft/) to gain a better understanding of the context. 
@@ -38,6 +41,40 @@ The interpretation of this figure will be discussed below.
 Raft divides time into *terms* in arbitrary length, with terms numbered consecutively. Each term commences with an election, during which only one server wins and becomes leader. The rest of the term involves the execution of the Raft protocol, as shown in the following figure. In some situations, election may lead to two or more leaders, called split vote. In this case, the term will end with no leader and immediately start a new election.
 
 ![terms](./img/terms.png)
+
+Terms in Raft act as a logical clock, with each server stores a *current term number* that increase monotonically over time. The current term is exchanged whenever servers communicate with each other. **If a server's current term is outdated compared to another server's current term, it updatas its current term to the larger value. Candidate and leaders, upon discovering outdated current term, revert to being follower. If server receives request with a stale current number, it rejects responding it.**
+
+Servers in Raft communicate using RPC(remote procedure call) and there are two types of RPC in Raft: Request Vote RPC, initiated by candidates to request votes from follower during election, and Append-Entries RPC, initiated by leader to replicate log entries and provide a heartbeat mechanism.
+
+## Raft Principle
+
+In this section, we will delve into three subproblems—*Leader Election*, *Leg Replication* and *Safty*—decomposed by Raft in order. Notably, the safty aspect is restrition to leader election and log replication.
+
+### Leader Election
+
+There are two types of timeout setting in Raft: **heartbeat timeout** and **election timeout**. When server starts up, it begins as a follower. A server remains in follower state as long as it consistently receives valid RPCs(irrespective of their type) from a candidate or leader. Leader periodically sends Append-Entries RPCs, without log entries, to all follower to prevent the initiation of a new election by follower. This mechanism is called heartbeat mechanism and the interval for sending Append-Entries RPC is defined as the **heartbeat timeout**. If follower receives no communication a specified period, known as the **election timeout**, it assumes there is currently no leader and initiates a new election.
+
+When one follower initiates a new election, it **increments its current term number and transitions to candidate state.** The candidate then **votes for itself and sends Request Vote RPCs in parallel to each of the other server** in cluster. Candidate remains this state **unless** one of three events occurs: it wins the election, another candidate wins the election or no candidate wins the election.
+
+A candidate wins the election if it receives a majority of vote(usually greater than half) from the other server in the full cluster. Each server votes at most one candidate using a first-come-first-serve approach in a given term. When a server votes for a candidate, it update its current term to the greater of the two. we assumes that the term of candidate is greater than the term of another server; otherwise, the server will reject voting for that candidate. Once candidate wins the election, it become leader and immediately send heartbeat message(which is an Append-Entries RPC but carries no log entries.) to other server to prevent the initiation of a new election by followers.
+
+While waiting for votes, a candidate may receive an Append-Entries RPC from another 'leader' claiming its autority. The candidate then compares its own term with the term in the Append-Entries RPC. If the term in Append-Entries RPC is greater than the candidate's term, the candidate reverts to follower state; otherwise, it will reject this RPC and remain candidate state.
+
+The thrid situation is when neither candidate wins nor loses election. If the election timeout of many followers expires simultaneously, they will transition to the candidate state and votes could be split among these candidate, preventing any candidate from receiveing a majority of votes. With no winner, all candidates revert to follower, and then they will once again experience the experiation of their election timeout simultaneously. This situation will indefinitely repeat without any additional mechanism.
+
+Raft utilizes a randomized election timeout to address this issue. **Election timeouts are chosen randomly from a fixed interval(e.g. from 150ms to 300ms).** With no two server haveing the same election timeout, the occurrence of split vote is rare and the issue can be resolved quickly.
+
+The structure of leader election is shown as the following figure: 
+
+![LeaderLecetion](./img/LeaderLecetion.png)
+
+### Log Replication
+
+
+
+
+
+
 
 
 
