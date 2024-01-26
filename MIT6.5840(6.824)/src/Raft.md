@@ -6,6 +6,7 @@
   - [Raft Principle](#raft-principle)
     - [Leader Election](#leader-election)
     - [Log Replication](#log-replication)
+    - [Safety](#safety)
 
 
 In this article, I will share my Interpretation of the [Raft Paper](https://raft.github.io/raft.pdf). Before delving into the details, it is beneficial to take a brief look at this [virtualization guide](http://thesecretlivesofdata.com/raft/) to gain a better understanding of the context. 
@@ -44,7 +45,7 @@ Raft divides time into *terms* in arbitrary length, with terms numbered consecut
 
 Terms in Raft act as a logical clock, with each server stores a *current term number* that increase monotonically over time. The current term is exchanged whenever servers communicate with each other. **If a server's current term is outdated compared to another server's current term, it updatas its current term to the larger value. Candidate and leaders, upon discovering outdated current term, revert to being follower. If server receives request with a stale current number, it rejects responding it.**
 
-Servers in Raft communicate using RPC(remote procedure call) and there are two types of RPC in Raft: Request Vote RPC, initiated by candidates to request votes from follower during election, and Append-Entries RPC, initiated by leader to replicate log entries and provide a heartbeat mechanism.
+Servers in Raft communicate using RPC(remote procedure call) and there are two types of RPC in Raft: Request Vote RPC, initiated by candidates to request votes from follower during election, and AppendEntries RPC, initiated by leader to replicate log entries and provide a heartbeat mechanism.
 
 ## Raft Principle
 
@@ -52,13 +53,15 @@ In this section, we will delve into three subproblems—*Leader Election*, *Leg 
 
 ### Leader Election
 
-There are two types of timeout setting in Raft: **heartbeat timeout** and **election timeout**. When server starts up, it begins as a follower. A server remains in follower state as long as it consistently receives valid RPCs(irrespective of their type) from a candidate or leader. Leader periodically sends Append-Entries RPCs, without log entries, to all follower to prevent the initiation of a new election by follower. This mechanism is called heartbeat mechanism and the interval for sending Append-Entries RPC is defined as the **heartbeat timeout**. If follower receives no communication a specified period, known as the **election timeout**, it assumes there is currently no leader and initiates a new election.
+There are two types of timeout setting in Raft: **heartbeat timeout** and **election timeout**. When server starts up, it begins as a follower. A server remains in follower state as long as it consistently receives valid RPCs(irrespective of their type) from a candidate or leader. Leader periodically sends AppendEntries RPCs, without log entries, to all follower to prevent the initiation of a new election by follower. This mechanism is called heartbeat mechanism and the interval for sending Append-Entries RPC is defined as the **heartbeat timeout**. If follower receives no communication a specified period, known as the **election timeout**, it assumes there is currently no leader and initiates a new election.
 
 When one follower initiates a new election, it **increments its current term number and transitions to candidate state.** The candidate then **votes for itself and sends Request Vote RPCs in parallel to each of the other server** in cluster. Candidate remains this state **unless** one of three events occurs: it wins the election, another candidate wins the election or no candidate wins the election.
 
-A candidate wins the election if it receives a majority of vote(usually greater than half) from the other server in the full cluster. Each server votes at most one candidate using a first-come-first-serve approach in a given term. When a server votes for a candidate, it update its current term to the greater of the two. we assumes that the term of candidate is greater than the term of another server; otherwise, the server will reject voting for that candidate. Once candidate wins the election, it become leader and immediately send heartbeat message(which is an Append-Entries RPC but carries no log entries.) to other server to prevent the initiation of a new election by followers.
+A candidate wins the election if it receives a majority of vote(usually greater than half) from the other server in the full cluster. Each server votes at most one candidate using a first-come-first-serve approach in a given term. When a server votes for a candidate, it update its current term to the greater of the two. we assumes that the term of candidate is greater than the term of another server; otherwise, the server will reject voting for that candidate. Once candidate wins the election, it become leader and immediately send heartbeat message(which is an AppendEntries RPC but carries no log entries.) to other server to prevent the initiation of a new election by followers.
 
-While waiting for votes, a candidate may receive an Append-Entries RPC from another 'leader' claiming its autority. The candidate then compares its own term with the term in the Append-Entries RPC. If the term in Append-Entries RPC is greater than the candidate's term, the candidate reverts to follower state; otherwise, it will reject this RPC and remain candidate state.
+More precisely, if there are $2F+1$ servers in Raft, a majority of server means that the number of server is greater than or equal to $F$. Additionally, this system can tolerate $F$ server crashs.
+
+While waiting for votes, a candidate may receive an AppendEntries RPC from another 'leader' claiming its autority. The candidate then compares its own term with the term in the Append-Entries RPC. If the term in Append-Entries RPC is greater than the candidate's term, the candidate reverts to follower state; otherwise, it will reject this RPC and remain candidate state.
 
 The thrid situation is when neither candidate wins nor loses election. If the election timeout of many followers expires simultaneously, they will transition to the candidate state and votes could be split among these candidate, preventing any candidate from receiveing a majority of votes. With no winner, all candidates revert to follower, and then they will once again experience the experiation of their election timeout simultaneously. This situation will indefinitely repeat without any additional mechanism.
 
@@ -70,13 +73,75 @@ The structure of leader election is shown as the following figure:
 
 ### Log Replication
 
+Once a leader has elected, it begins receiveing requests from clients. Each request from client contains a command to be executed by replicated state machine. Raft **uses a log entry to represent a command**, and **the command is executed only when it has replicated across a majority of server in Raft**. Notably, a log contains a sequence of log entries.
 
+The leader appends the command to its log as a new entries, then it issues AppendEntries RPCs simultaneously to all follower to replicate this log entry. When this log has safely replicated(replicated by a majority of followers), the leader executes the command and returns the result to client. **If certain followers don't respond to leader(e.g. follower crash, run slowly or network delay), the leader indefinitely issues AppendEntries RPC until this log has been safely store in all follower.**
 
+Each log contains the command to be executed and the **term number** when this log is created by leader. Each log entry identified by **integer index**, indicating its position in the log.
 
+The log entry, which is applied to state machines by leader, is known as *committed*. Raft guarantees that committed log is durable and will eventually executed by all avaliable state machines. **The leader keeps track of the highest index of the committed log entry, and it includes this index in the future AppendEntry RPC so that follower can be aware of the latest committed log entry. When follower learns that  a certain log entry is committed by leader, it commits that log entry in its local state machine.**
 
+Raft consistently gurantees the validation of the following properties: 
 
+- If two entries in different logs have the same index and term, then they store the same command.
+- If two entries in different logs have the same index and term, then the logs are identical in all preceding entries.
 
+The first property follows from the fact that leader only appends once in specified index in the log in a given term and second property is guaranteed by the consistency check in AppendEntry RPC. When sending AppendEntry RPC, leader includes the index and term of the latest log entry along with the index and term of the immediately previous one. **If the follower doesn't find the entry satisfying the latter, it refuses the current appended log entry.**
 
+Borrow the expression from the original paper, this process is:
+
+> The consistency check acts as an induction step: the initial empty state of the logs satisfies the Log Matching Property, and the consistency check preserves the Log Matching Property whenever logs are extended.  As a result, whenever AppendEntries returns successfully, the leader knows that the follower’s log is identical to its own log up through the new entries.
+
+During normal execution, the log in leader and followers is consistent and does not result in faults. However, when the leader crashs, the inconsistencies between the leader and followers may occur. A follower may lose log entries that are present in leader, or it may have extra entries that are no present in leader, as shown in the following figure:
+
+![Inconsistency](./img/Inconsistency.png)
+
+In Raft, leader handles inconsistencies by forcing the follower's log to be the same as the leader's log. This means that each conflicting log entry in followers will be overwritten with the leader's log entries.
+
+To ensure that the follower's log is the same as the leader's log, leader must find **the latest log entry where they are identical.** At that point, follower will delete subsequent log entries and insert leader's log entries. All of this action is occured within the consistency check in the AppendEntry RPC.
+
+Leader maintains a *nextIndex* for each follower, represtenting the position of the next log entry in leader's log to be sent to that follower. When the leader first comes to power, it initializes all nextIndex values to the latest index in its own log(in the former example, it is 11). If the follower's log is inconsistent with the leader's, the consistency check in AppendEntry RPC will fail in that index. The leader then decreases the nextIndex and retries the AppendEntry RPC. Eventually, nextIndex will reach the index correspending to the log entry in the follower and in the leader is identical. When this happens, AppendEntry RPC will succeed and remove any conflicting log entries in the follower. With all these steps done, the follower can append the leader's log entries from that index as normal execution.
+
+In the above discussion, we learned that the AppendEntry RPC always send two pairs of (index, term) along with the correspenging log entry to the follower. One represents the new log entry, and the other represents the immediately previous one. After introducing consistency-handling mechanism, I think that the content of the AppendEntry RPC will include two log entries, one is the new log entry, the other is the log entry pointed by nextIndex.
+
+For fast recovery from inconsistency, the description in the paper is as follows:
+
+> If desired, the protocol can be optimized to reduce the number of rejected AppendEntries RPCs. For example, when rejecting an AppendEntries request, the follower can include the term of the conflicting entry and the first index it stores for that term. With this information, the leader can decrement nextIndex to bypass all of the conflicting entries in that term; one AppendEntries RPC will be required for each term with conflicting entries, rather than one RPC per entry. In practice, we doubt this optimization is necessary, since failures happen infrequently and it is unlikely that there will be many inconsistent entries.
+
+The core idea in this optimization is to treat a term as a unit instead of a log entry as a unit, notably, allowing the terms of multiply log entries to be identical.
+
+The current state of all nodes is as follows, and the numbers in each row represtent **the term of that log entry**.
+
+```
+     Case 1      Case 2       Case 3
+idx: 1 2 3 4     1 2 3 4      1 2 3 4
+S1:  4 5 5       4 4 4        4
+S2:  4 6 6 6 or  4 6 6 6  or  4 6 6 6
+
+S2 is leader for term 6, S1 comes back to life, S2 sends AE for last 6 AE has prevLogTerm = 6 and nextIndex = 3
+```
+
+For implementing fast recovery(roll back), we should add three fields to AppendEntries RPC: `XTerm`, which represents the **term** in the conflicting entry(if any) in the follower, `XIndex`, which represents the first index of that term(if any) in the follower, and `XLen`, which represents the length of log in the follower.
+
+```
+case 1: 
+XTerm: 5, XIndex: 2, XLen: 3
+leader don't have XTerm, nextIndex = XIndex
+----------
+case 2:
+XTerm: 4, XIndex: 1, XLen: 3
+leader have XTerm, nextIndex = leader's last entry for XTerm(it's 1)
+---------
+case 3:
+XTerm: 4, XIndex: 1, XLen: 1
+there are no log entry in nextIndex, nextIndex = XLen
+```
+
+The structure of log replication is shown as the following figure: 
+
+![LogReplication](./img/LogReplication.png)
+
+### Safety
 
 
 
