@@ -7,6 +7,7 @@
     - [Leader Election](#leader-election)
     - [Log Replication](#log-replication)
     - [Safety](#safety)
+    - [Follower \& Candidate Crash](#follower--candidate-crash)
 
 
 In this article, I will share my Interpretation of the [Raft Paper](https://raft.github.io/raft.pdf). Before delving into the details, it is beneficial to take a brief look at this [virtualization guide](http://thesecretlivesofdata.com/raft/) to gain a better understanding of the context. 
@@ -79,7 +80,13 @@ The leader appends the command to its log as a new entries, then it issues Appen
 
 Each log contains the command to be executed and the **term number** when this log is created by leader. Each log entry identified by **integer index**, indicating its position in the log.
 
-The log entry, which is applied to state machines by leader, is known as *committed*. Raft guarantees that committed log is durable and will eventually executed by all avaliable state machines. **The leader keeps track of the highest index of the committed log entry, and it includes this index in the future AppendEntry RPC so that follower can be aware of the latest committed log entry. When follower learns that  a certain log entry is committed by leader, it commits that log entry in its local state machine.**
+The log entry, when is safely applied to state machines by leader, is termed *committed*. A log entry becomes committed once the leader successfully replicated it to a majority of servers. This act indirectly commits all preceding log entries in the leader's log, including those from previous leader's log. Raft guarantees that committed log is durable and will eventually executed by all avaliable state machines. **The leader keeps track of the highest index of the committed log entry, and it includes this index in the future AppendEntry RPC so that follower can be aware of the latest committed log entry. When follower learns that a certain log entry is committed by leader, it commits that log entry in its local state machine.**
+
+The committed log entries are depicted in the following figure:
+
+![CommittedEntry](./img/CommittedEntry.png)
+
+At the presence of log index 8, the preceding 7 log entries haven been all committed. **The log entry at index 8 is considered committed only when it has been successfully replicated on a majority of servers, and new index 9 has been created.**
 
 Raft consistently gurantees the validation of the following properties: 
 
@@ -88,7 +95,7 @@ Raft consistently gurantees the validation of the following properties:
 
 The first property follows from the fact that leader only appends once in specified index in the log in a given term and second property is guaranteed by the consistency check in AppendEntry RPC. When sending AppendEntry RPC, leader includes the index and term of the latest log entry along with the index and term of the immediately previous one. **If the follower doesn't find the entry satisfying the latter, it refuses the current appended log entry.**
 
-Borrow the expression from the original paper, this process is:
+To borrow the expression from the original paper, this process is:
 
 > The consistency check acts as an induction step: the initial empty state of the logs satisfies the Log Matching Property, and the consistency check preserves the Log Matching Property whenever logs are extended.  As a result, whenever AppendEntries returns successfully, the leader knows that the follower’s log is identical to its own log up through the new entries.
 
@@ -119,6 +126,8 @@ S1:  4 5 5       4 4 4        4
 S2:  4 6 6 6 or  4 6 6 6  or  4 6 6 6
 
 S2 is leader for term 6, S1 comes back to life, S2 sends AE for last 6 AE has prevLogTerm = 6 and nextIndex = 3
+
+nextIndex is the index of prevLogTerm
 ```
 
 For implementing fast recovery(roll back), we should add three fields to AppendEntries RPC: `XTerm`, which represents the **term** in the conflicting entry(if any) in the follower, `XIndex`, which represents the first index of that term(if any) in the follower, and `XLen`, which represents the length of log in the follower.
@@ -142,6 +151,42 @@ The structure of log replication is shown as the following figure:
 ![LogReplication](./img/LogReplication.png)
 
 ### Safety
+
+So far, we have discussed the sections on leader election and log replication; however, these mechanisms are not quite sufficient to ensure the correctness of Raft algorithm. For example, a follower might be unavailable when leader commits serveral log entries, and after it restart, it may be elected as a leader and force original leader to replicate its own log. In this situation, the state machine of the original leader has executed commands that are not present in new leader. As a result, different state machine may execute different command(because the committed log entries may be ignored).
+
+In the safety section, we will add restrictions to leader election to ensure that **the leader for any given term contains all committed log entries in previous terms.**
+
+**Raft ensures the presence of all committed log entries from previous terms on each new leader.** Raft algorithm avoids adding extra mechanisms to transmit log entries from the original leader to the new leader, ensuring that the log only flows in a unidirectional manner, from leader to follower, and leader never overwirtes its log entries.  
+
+The first sub-restriction is that **the candidate wins election only when its log includes all committed entries.** In secure victory in the election, the candidate must contact a majority of servers in cluster,*ensuring that it possesses the committed log entries for each server. **If the candidate's log is at least as up-to-date as any other server in majority, it ensures that all committed log entries are presentd in the candidate.**
+
+The comparesion of latest log in Raft involves comparing the **index** and **term** of the last log entries in log. it's essential to note the distinction between 'log' and 'log entry'; the former includes a sequence of the latter. **If the last log entries in two logs are different in term, then the log with the later term is considered more up-to-date. If the last log entries in two log are identical in term, then the log with the greater index is considered more up-to-date(its length is more longer).**
+
+The RequestVote RPC implements this restriction by including the information about candidate's log. **If a voter discovers that its own log is more up-to-date than candidate's log, it will reject the vote.**
+
+The second sub-restriction arises from the issue that if the original leader crashs and a new leader is elected, the new leader may be unable to determine whether log entries replicated in a majority of servers are committed. For instance, if certain log entries have been replicated in a majority of servers but the original leader crashs before committing them, the new leader can not determine whether its current log entries have been committed. 
+
+This issue is shown as the following figure:
+
+![CommittedIssue](./img/CommittedIssue.png)
+
+By the way, each RPC, irrespective of type, updates the current term in server. The comparsion in the first sub-restriction utilizes the term and index of the latest log entry instead of the current term.
+
+Phases (d) and (e) are derived from phase (c) but the latter is right(former is wrong). The log entry with term 2 and index 2 has been successfully replicated on a majority of servers. If S1 crashs and S5 is elected as a leader, whether the log entry with term 2 and index 2 commits or nor, it will be overwritten by the log entry with term 3 and index 2. The issue arises Here: the log entry, replicated on a majority of servers, is overwritten by another leader.
+
+Therefore, **Raft commits previous log entries that have been replicated on a majority on servers but remain uncommitted, only when the log entry with the current term has been replicated across a majority of servers.**
+
+The original expression of this section in paper is written as follows. However, I find this expression is difficult to understand, so I provide my own interpretation.
+
+> To eliminate problems like the one in Figure 8, Raft never commits log entries from previous terms by counting replicas. Only log entries from the leader’s current term are committed by counting replicas; once an entry from the current term has been committed in this way, then all prior entries are committed indirectly because of the Log Matching Property.
+
+So far, let's conclude the section of safety, the restriction is:
+
+- the leader for any given term contains all committed log entries in previous terms. 
+  - the candidate wins election only when its log includes all committed entries. 
+  - Raft commits previous log entries only when log entries with current term have been replicated on a majority of servers.
+
+### Follower & Candidate Crash 
 
 
 
