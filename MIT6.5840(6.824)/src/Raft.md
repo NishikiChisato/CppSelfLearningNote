@@ -8,6 +8,9 @@
     - [Log Replication](#log-replication)
     - [Safety](#safety)
     - [Follower \& Candidate Crash](#follower--candidate-crash)
+    - [Timing](#timing)
+  - [Log Compaction](#log-compaction)
+  - [Definition](#definition)
 
 
 In this article, I will share my Interpretation of the [Raft Paper](https://raft.github.io/raft.pdf). Before delving into the details, it is beneficial to take a brief look at this [virtualization guide](http://thesecretlivesofdata.com/raft/) to gain a better understanding of the context. 
@@ -187,6 +190,52 @@ So far, let's conclude the section of safety, the restriction is:
   - Raft commits previous log entries only when log entries with current term have been replicated on a majority of servers.
 
 ### Follower & Candidate Crash 
+
+In this section, I provide the original expression from the paper because they are easy to understand.
+
+> Until this point we have focused on leader failures. Follower and candidate crashes are much simpler to handle than leader crashes, and they are both handled in the same way. If a follower or candidate crashes, then future RequestVote and AppendEntries RPCs sent to it will fail. Raft handles these failures by retrying indefinitely; if the crashed server restarts, then the RPC will complete successfully. If a server crashes after completing an RPC but before responding, then it will receive the same RPC again after it restarts. Raft RPCs are idempotent, so this causes no harm. For example, if a follower receives an AppendEntries request that includes log entries already present in its log, it ignores those entries in the new request.
+
+### Timing 
+
+Raft system must satify the following timing requirement:
+
+$$
+broadcastTime\ll electionTimeout\ll MTBF
+$$
+
+In this inequality, $broadcastTime$ represents the average round time of RPCs, $electionTimeout$ is the user-specified election timeout, and $MTBF$ is the average time between failures for a single server.
+
+> The broadcast time should be an order of magnitude less than the election timeout so that leaders can reliably send the heartbeat messages required to keep followers from starting elections; given the randomized approach used for election timeouts, this inequality also makes split votes unlikely. The election timeout should be a few orders of magnitude less than MTBF so that the system makes steady progress. When the leader crashes, the system will be unavailable for roughly the election timeout; we would like this to represent only a small fraction of overall time.
+>
+> Raft’s RPCs typically require the recipient to persist information to stable storage, so the broadcast time may range from 0.5ms to 20ms, depending on storage technology. As a result, the election timeout is likely to be somewhere between 10ms and 500ms. Typical server MTBFs are several months or more, which easily satisfies the timing requirement.
+
+## Log Compaction
+
+Raft's log grows unbounded during normal execution. Therefore, we need an approach to compress log. Raft utilizes *snapshot* to compress the log. It writes the snapshot to stable storage, and then entire log up to that point is discarded.
+
+The principle of the snapshot is discribed in the following figure:
+
+![Snapshot](./img/Snapshot.png)
+
+Each server independently takes **snapshot that includes all committed log.** The snapshot includes additional metadata required for consistency check, such as *last included index*, representing the index of the last log entry in snapshot, and *last included term*, representing the term of the last log entry in snapshot. This metadata is essential for each consistency check in AppendEntry RPC, as it requires the previous index and term. **After a server completes snapshot in its own log, it discards all committed log entries that have been compressed in the current snapshot and any prior snapshots.**
+
+In specific situation, such as when a follower's log significantly lag behind the leader's or when a new server joins in closter, the leader requires a method to send its own snapshot to those followers that are too far behind over the network. This action is facilitated using another RPC: InstallSnapshot RPC.
+
+The leader initiates the InstallSnapshot RPC to dispatch its own snapshot to followers that lag significantly behind. Since the snapshot typically includes information absent in the follower's log, conflicts are inevitable. In such instances, the follower discards all its existing log entries and is supersuded by the receving snapshot. If the follower receives a snapshot that discribes a prefix of log entries alreadly present in its log, only its own log entries that are compressed within the received snapshot are deleted, while the remaining log entries will be retain.
+
+The paper discusses two issues that impact performance, here I provide the original expression:
+
+> There are two more issues that impact snapshotting performance. First, servers must decide when to snapshot. If a server snapshots too often, it wastes disk bandwidth and energy; if it snapshots too infrequently, it risks exhausting its storage capacity, and it increases the time required to replay the log during restarts. **One simple strategy is to take a snapshot when the log reaches a fixed size in bytes.** If this size is set to be significantly larger than the expected size of a snapshot, then the disk bandwidth overhead for snapshotting will be small.
+>
+> The second performance issue is that writing a snapshot can take a significant amount of time, and we do not want this to delay normal operations. The solution is to use copy-on-write techniques so that new updates can be accepted without impacting the snapshot being written. For example, state machines built with functional data structures naturally support this. Alternatively, the operating system’s copy-on-write support (e.g., fork on Linux) can be used to create an in-memory snapshot of the entire state machine (our implementation uses this approach).
+
+## Definition
+
+At the end, I list the definition of Raft from the paper.
+
+![RaftDefinition](./img/RaftDefinition.png)
+
+![RaftSnapshot](./img/RaftSnapshot.png)
 
 
 
